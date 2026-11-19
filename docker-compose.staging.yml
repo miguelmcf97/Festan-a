@@ -1,0 +1,4 @@
+# Homologação: porta 3101 só em localhost (o Nginx do host faz o proxy com SSL)
+services:
+  app:
+    ports: ["127.0.0.1:3101:3000"]

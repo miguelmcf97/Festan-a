@@ -1,0 +1,11 @@
+# Produção: porta 3100 só em localhost (o Nginx do host faz o proxy com SSL)
+services:
+  app:
+    ports: ["127.0.0.1:3100:3000"]
+    deploy:
+      resources:
+        limits: { memory: 1g }
+  db:
+    deploy:
+      resources:
+        limits: { memory: 1g }
