@@ -33,6 +33,8 @@ export function PlannerChat({
   const [plan, setPlan] = useState<Plan>(initial?.plan ?? null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [liveText, setLiveText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Map<string, Selected>>(new Map());
   const [dialog, setDialog] = useState(false);
@@ -50,21 +52,54 @@ export function PlannerChat({
     setInput("");
     setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", content: msg }]);
     setSending(true);
+    setStatus("Lendo seu pedido…");
+    setLiveText("");
     try {
-      const res = await fetch("/api/ai/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: msg, conversationId }) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Não foi possível enviar a mensagem.");
-      const out = data as ChatOutput;
-      setMessages((m) => [...m, { id: `a-${Date.now()}`, role: "assistant", content: out.reply, ui: out.ui }]);
-      setConversationId(out.conversationId);
-      setEventId(out.eventId);
-      setEvent(out.event);
-      setPlan(out.plan);
-      if (!conversationId) window.history.replaceState(null, "", `/planejar?c=${out.conversationId}`);
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+        body: JSON.stringify({ message: msg, conversationId }),
+      });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Não foi possível enviar a mensagem.");
+      }
+      // Lê os eventos linha a linha: status, trechos de texto, resultado final
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let out: ChatOutput | null = null;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line);
+          if (ev.type === "status") setStatus(ev.text);
+          else if (ev.type === "text") setLiveText((t) => t + ev.delta);
+          else if (ev.type === "reset") setLiveText("");
+          else if (ev.type === "error") throw new Error(ev.error);
+          else if (ev.type === "done") out = ev.data as ChatOutput;
+        }
+      }
+      if (!out) throw new Error("A resposta foi interrompida. Tente de novo.");
+      const final = out;
+      setMessages((m) => [...m, { id: `a-${Date.now()}`, role: "assistant", content: final.reply, ui: final.ui }]);
+      setConversationId(final.conversationId);
+      setEventId(final.eventId);
+      setEvent(final.event);
+      setPlan(final.plan);
+      if (!conversationId) window.history.replaceState(null, "", `/planejar?c=${final.conversationId}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setSending(false);
+      setLiveText("");
+      setStatus(null);
     }
   }
 
@@ -157,13 +192,19 @@ export function PlannerChat({
               </div>
             ),
           )}
-          {sending && (
-            <div className="inline-flex gap-1 rounded-2xl bg-surface px-4 py-3" aria-label="A assistente está escrevendo">
-              <span className="typing-dot size-2 rounded-full bg-ink" />
-              <span className="typing-dot size-2 rounded-full bg-ink" />
-              <span className="typing-dot size-2 rounded-full bg-ink" />
-            </div>
-          )}
+          {sending &&
+            (liveText ? (
+              <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-surface px-4 py-3 whitespace-pre-line">{liveText.replace(/\*\*/g, "")}</div>
+            ) : (
+              <div className="inline-flex items-center gap-3 rounded-2xl bg-surface px-4 py-3" role="status">
+                <span className="inline-flex gap-1" aria-hidden>
+                  <span className="typing-dot size-2 rounded-full bg-ink" />
+                  <span className="typing-dot size-2 rounded-full bg-ink" />
+                  <span className="typing-dot size-2 rounded-full bg-ink" />
+                </span>
+                <span className="text-sm text-ink-soft">{status ?? "Pensando…"}</span>
+              </div>
+            ))}
           {error && <Alert tone="error">{error}</Alert>}
           <div ref={bottomRef} />
         </div>

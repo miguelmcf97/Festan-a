@@ -7,6 +7,7 @@ import { reaisToCents, slugify } from "@/lib/format";
 import { audit, requireUser } from "@/server/auth";
 import { db } from "@/server/db";
 import { categories, complaints, providers, reviews, sessions, users } from "@/server/db/schema";
+import { invalidateCatalogCache } from "@/server/services/catalog-cache";
 import { notify, refreshProviderMetrics } from "@/server/services/quotes";
 
 const s = z.string().min(1);
@@ -84,6 +85,7 @@ export async function saveCategoryAction(fd: FormData) {
     const [c] = await db.insert(categories).values({ ...values, slug }).returning();
     await audit(admin.id, "category.create", "category", c.id);
   }
+  invalidateCatalogCache();
   done("/admin/categorias", "Categoria salva.");
 }
 
@@ -93,6 +95,7 @@ export async function toggleCategoryAction(fd: FormData) {
   const c = await db.query.categories.findFirst({ where: eq(categories.id, id) });
   if (c) await db.update(categories).set({ active: !c.active }).where(eq(categories.id, id));
   await audit(admin.id, "category.toggle", "category", id);
+  invalidateCatalogCache();
   done("/admin/categorias", c?.active ? "Categoria desativada." : "Categoria ativada.");
 }
 

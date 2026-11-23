@@ -3,7 +3,8 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { aiConversations, aiMessages, categories, events } from "../db/schema";
 import { latestPlan } from "../services/planning";
-import { costMicroUsd, getEngine, type ChatTurn } from "./engines";
+import { costMicroUsd, getEngine, type ChatTurn, type EngineEvents, type EngineResult } from "./engines";
+import { getActiveCategories } from "../services/catalog-cache";
 import { PROMPT_VERSION, plannerSystemPrompt } from "./prompts";
 import { eventSnapshot, planStateText, type UiPayload } from "./tools";
 
@@ -17,6 +18,7 @@ export type ChatOutput = {
   ui: UiPayload;
   event: Awaited<ReturnType<typeof eventSnapshot>>;
   plan: Awaited<ReturnType<typeof serializePlan>>;
+  timings?: Record<string, number>;
 };
 
 export async function chat(input: {
@@ -24,7 +26,9 @@ export async function chat(input: {
   conversationId?: string | null;
   userId: string | null;
   anonKey: string | null;
+  events?: EngineEvents;
 }): Promise<ChatOutput> {
+  const tStart = Date.now();
   const engine = await getEngine();
   const owner = input.userId ? { userId: input.userId } : { anonKey: input.anonKey };
 
@@ -56,13 +60,21 @@ export async function chat(input: {
       .returning();
   }
   const eventId = conv.eventId!;
+  const convId = conv.id;
 
-  const historyRows = await db
-    .select({ role: aiMessages.role, content: aiMessages.content })
-    .from(aiMessages)
-    .where(eq(aiMessages.conversationId, conv.id))
-    .orderBy(desc(aiMessages.createdAt))
-    .limit(HISTORY_TURNS);
+  // Consultas independentes em paralelo (cada ida ao banco pode custar ~100 ms entre regiões)
+  const [historyRows, cats, snapshot, planState] = await Promise.all([
+    db
+      .select({ role: aiMessages.role, content: aiMessages.content })
+      .from(aiMessages)
+      .where(eq(aiMessages.conversationId, convId))
+      .orderBy(desc(aiMessages.createdAt))
+      .limit(HISTORY_TURNS),
+    getActiveCategories(),
+    eventSnapshot(eventId),
+    planStateText(eventId),
+    db.insert(aiMessages).values({ conversationId: convId, role: "USER", content: input.message }),
+  ]);
   const history: ChatTurn[] = historyRows
     .reverse()
     .filter((m) => m.role !== "TOOL")
@@ -70,26 +82,21 @@ export async function chat(input: {
   // a API exige que o histórico comece com o usuário
   while (history.length && history[0].role !== "user") history.shift();
 
-  const cats = await db
-    .select({ slug: categories.slug, name: categories.name, group: categories.group })
-    .from(categories)
-    .where(eq(categories.active, true))
-    .orderBy(categories.sortOrder);
   const system = plannerSystemPrompt({
     today: new Date().toISOString().slice(0, 10),
     categoriesCatalog: cats.map((c) => `${c.slug} — ${c.name} (${c.group})`).join("\n"),
-    eventState: JSON.stringify(await eventSnapshot(eventId), null, 1),
-    planState: await planStateText(eventId),
+    eventState: JSON.stringify(snapshot, null, 1),
+    planState,
   });
+  const tPrep = Date.now();
 
   const ui: UiPayload = {};
-  await db.insert(aiMessages).values({ conversationId: conv.id, role: "USER", content: input.message });
-
-  let result;
+  let result: EngineResult;
   try {
-    result = await engine.run({ system, history, userMessage: input.message, ctx: { eventId }, ui });
+    result = await engine.run({ system, history, userMessage: input.message, ctx: { eventId }, ui, events: input.events });
   } catch (e) {
     console.error("[ai] falha no motor", engine.id, (e as Error).message);
+    input.events?.onReset?.();
     result = {
       text: "Tive um problema técnico para processar sua mensagem agora. Pode tentar de novo em instantes? Seu planejamento continua salvo.",
       inputTokens: 0,
@@ -97,43 +104,57 @@ export async function chat(input: {
       toolCalls: [],
     };
   }
+  const tEngine = Date.now();
 
   const cost = costMicroUsd(engine.model, result.inputTokens, result.outputTokens);
-  if (result.toolCalls.length)
-    await db.insert(aiMessages).values(
-      result.toolCalls.map((t) => ({
-        conversationId: conv!.id,
+  const [, , eventOut, planOut] = await Promise.all([
+    db.insert(aiMessages).values([
+      ...result.toolCalls.map((t) => ({
+        conversationId: convId,
         role: "TOOL" as const,
         toolName: t.name,
         content: JSON.stringify(t.input).slice(0, 4000),
         payload: t.result as never,
       })),
-    );
-  await db.insert(aiMessages).values({
-    conversationId: conv.id,
-    role: "ASSISTANT",
-    content: result.text,
-    payload: ui as never,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-  });
-  await db
-    .update(aiConversations)
-    .set({
-      inputTokens: sql`${aiConversations.inputTokens} + ${result.inputTokens}`,
-      outputTokens: sql`${aiConversations.outputTokens} + ${result.outputTokens}`,
-      costMicroUsd: sql`${aiConversations.costMicroUsd} + ${cost}`,
-    })
-    .where(eq(aiConversations.id, conv.id));
+      {
+        conversationId: convId,
+        role: "ASSISTANT" as const,
+        content: result.text,
+        payload: ui as never,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      },
+    ]),
+    db
+      .update(aiConversations)
+      .set({
+        inputTokens: sql`${aiConversations.inputTokens} + ${result.inputTokens}`,
+        outputTokens: sql`${aiConversations.outputTokens} + ${result.outputTokens}`,
+        costMicroUsd: sql`${aiConversations.costMicroUsd} + ${cost}`,
+      })
+      .where(eq(aiConversations.id, convId)),
+    eventSnapshot(eventId),
+    serializePlan(eventId),
+  ]);
+
+  const timings = {
+    totalMs: Date.now() - tStart,
+    prepMs: tPrep - tStart,
+    engineMs: tEngine - tPrep,
+    saveMs: Date.now() - tEngine,
+    ...(result.timings ?? {}),
+  };
+  console.info(JSON.stringify({ tag: "ai.timing", engine: engine.id, model: engine.model, prompt: PROMPT_VERSION, conv: convId, ...timings }));
 
   return {
-    conversationId: conv.id,
+    conversationId: convId,
     eventId,
     reply: result.text,
     engine: engine.id,
     ui,
-    event: await eventSnapshot(eventId),
-    plan: await serializePlan(eventId),
+    event: eventOut,
+    plan: planOut,
+    timings,
   };
 }
 

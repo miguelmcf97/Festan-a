@@ -3,18 +3,33 @@ import Anthropic from "@anthropic-ai/sdk";
 import { executeTool, TOOL_DEFS, type ToolContext, type UiPayload } from "./tools";
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
+/** Eventos de progresso enviados à tela enquanto a IA trabalha. */
+export type EngineEvents = {
+  onStatus?: (text: string) => void;
+  onText?: (delta: string) => void;
+  onReset?: () => void; // texto transmitido não era a resposta final (veio antes de ferramentas)
+};
 export type EngineRun = {
-  system: string;
+  system: { cached: string; dynamic: string };
   history: ChatTurn[];
   userMessage: string;
   ctx: ToolContext;
   ui: UiPayload;
+  events?: EngineEvents;
 };
 export type EngineResult = {
   text: string;
   inputTokens: number;
   outputTokens: number;
   toolCalls: { name: string; input: unknown; result: unknown }[];
+  timings?: { llmMs: number; toolsMs: number; rounds: number };
+};
+
+const TOOL_STATUS: Record<string, string> = {
+  atualizar_evento: "Anotando os detalhes da festa…",
+  montar_planejamento: "Montando o planejamento e buscando fornecedores…",
+  buscar_fornecedores: "Buscando fornecedores na sua região…",
+  verificar_disponibilidade: "Conferindo as agendas…",
 };
 
 /** Interface independente do fornecedor de LLM. Trocar de modelo/fornecedor = nova implementação. */
@@ -47,48 +62,74 @@ export class AnthropicEngine implements PlannerEngine {
     this.client = new Anthropic({ apiKey, timeout: 60_000, maxRetries: 2 });
   }
 
-  async run({ system, history, userMessage, ctx, ui }: EngineRun): Promise<EngineResult> {
+  async run({ system, history, userMessage, ctx, ui, events }: EngineRun): Promise<EngineResult> {
     const messages: Anthropic.MessageParam[] = [
       ...history.map((h) => ({ role: h.role, content: h.content })),
       { role: "user", content: userMessage },
     ];
     const toolCalls: EngineResult["toolCalls"] = [];
     let inputTokens = 0,
-      outputTokens = 0;
-    const texts: string[] = [];
+      outputTokens = 0,
+      llmMs = 0,
+      toolsMs = 0,
+      rounds = 0;
+    let finalText = "";
+    events?.onStatus?.("Lendo seu pedido…");
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const res = await this.client.messages.create({
+      rounds++;
+      const t0 = Date.now();
+      let streamed = "";
+      const stream = this.client.messages.stream({
         model: this.model,
-        max_tokens: 1500,
-        // O prompt de sistema é estável dentro de uma conversa → cache reduz custo de entrada
-        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        max_tokens: 900,
+        // Parte fixa (instruções + catálogo) em cache; estado do evento muda a cada mensagem e fica fora.
+        system: [
+          { type: "text", text: system.cached, cache_control: { type: "ephemeral" } },
+          { type: "text", text: system.dynamic },
+        ],
         tools: TOOL_DEFS as unknown as Anthropic.Tool[],
         messages,
       });
+      stream.on("text", (delta) => {
+        streamed += delta;
+        events?.onText?.(delta);
+      });
+      const res = await stream.finalMessage();
+      llmMs += Date.now() - t0;
       inputTokens += res.usage.input_tokens + (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0);
       outputTokens += res.usage.output_tokens;
 
       const toolUses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-      for (const b of res.content) if (b.type === "text" && b.text.trim()) texts.push(b.text.trim());
-      if (res.stop_reason !== "tool_use" || toolUses.length === 0) break;
+      if (res.stop_reason !== "tool_use" || toolUses.length === 0) {
+        finalText = res.content.flatMap((b) => (b.type === "text" ? [b.text.trim()] : [])).filter(Boolean).join("\n\n");
+        break;
+      }
+      if (streamed.trim()) events?.onReset?.();
 
       messages.push({ role: "assistant", content: res.content as Anthropic.ContentBlockParam[] });
-      const results: Anthropic.ToolResultBlockParam[] = [];
-      for (const tu of toolUses) {
+      const t1 = Date.now();
+      // Atualizações do evento primeiro (as demais ferramentas dependem delas); o resto em paralelo.
+      const results = new Map<string, Anthropic.ToolResultBlockParam>();
+      const run = async (tu: Anthropic.ToolUseBlock) => {
+        events?.onStatus?.(TOOL_STATUS[tu.name] ?? "Consultando o catálogo…");
         const { result, isError } = await executeTool(tu.name, tu.input, ctx, ui);
         toolCalls.push({ name: tu.name, input: tu.input, result });
-        results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result), is_error: isError });
-      }
-      messages.push({ role: "user", content: results });
-      texts.length = 0; // só a fala final vai para o cliente
+        results.set(tu.id, { type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result), is_error: isError });
+      };
+      for (const tu of toolUses.filter((t) => t.name === "atualizar_evento")) await run(tu);
+      await Promise.all(toolUses.filter((t) => t.name !== "atualizar_evento").map(run));
+      toolsMs += Date.now() - t1;
+      messages.push({ role: "user", content: toolUses.map((tu) => results.get(tu.id)!) });
+      events?.onStatus?.("Escrevendo a resposta…");
     }
 
     return {
-      text: texts.join("\n\n") || "Atualizei seu planejamento. Dá uma olhada nos detalhes abaixo.",
+      text: finalText || "Atualizei seu planejamento. Dá uma olhada nos detalhes abaixo.",
       inputTokens,
       outputTokens,
       toolCalls,
+      timings: { llmMs, toolsMs, rounds },
     };
   }
 }

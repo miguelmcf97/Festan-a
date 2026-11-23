@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { haversineKm } from "@/lib/geo";
 import { db } from "../db";
+import { getActiveCategories, getActiveLocations } from "./catalog-cache";
 import {
   availability,
   categories,
@@ -63,10 +64,7 @@ export async function searchProviders(p: SearchParams): Promise<SearchResult> {
 
   let categoryIds: string[] | null = null;
   if (p.categorySlugs?.length) {
-    const cats = await db
-      .select({ id: categories.id, parentId: categories.parentId, slug: categories.slug })
-      .from(categories)
-      .where(eq(categories.active, true));
+    const cats = await getActiveCategories();
     const wanted = new Set(cats.filter((c) => p.categorySlugs!.includes(c.slug)).map((c) => c.id));
     // inclui subcategorias
     for (const c of cats) if (c.parentId && wanted.has(c.parentId)) wanted.add(c.id);
@@ -99,7 +97,7 @@ export async function searchProviders(p: SearchParams): Promise<SearchResult> {
     limit: 500,
   });
 
-  const target = p.locationId ? await db.query.locations.findFirst({ where: eq(locations.id, p.locationId) }) : null;
+  const target = p.locationId ? ((await getActiveLocations()).find((l) => l.id === p.locationId) ?? null) : null;
 
   let blocked = new Set<string>();
   if (p.date && rows.length) {
@@ -207,17 +205,11 @@ export async function searchProviders(p: SearchParams): Promise<SearchResult> {
 }
 
 export async function listActiveCategories() {
-  return db.query.categories.findMany({
-    where: eq(categories.active, true),
-    orderBy: (c, { asc }) => [asc(c.sortOrder), asc(c.name)],
-  });
+  return getActiveCategories();
 }
 
 export async function listLocations() {
-  return db.query.locations.findMany({
-    where: eq(locations.active, true),
-    orderBy: (l, { asc }) => [asc(l.city), asc(l.name)],
-  });
+  return getActiveLocations();
 }
 
 export async function providerCountByCategory() {

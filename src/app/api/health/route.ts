@@ -4,11 +4,16 @@ import { db } from "@/server/db";
 
 export const dynamic = "force-dynamic";
 
-/** Usado pelo healthcheck do Docker e pelo monitoramento externo (uptime). */
+/** Healthcheck (Docker/uptime). dbMs = tempo de uma consulta simples ao banco, medido no servidor. */
 export async function GET() {
   try {
-    await db.execute(sql`select 1`);
-    return NextResponse.json({ ok: true, env: process.env.APP_ENV ?? "unknown", time: new Date().toISOString() });
+    const samples: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now();
+      await db.execute(sql`select 1`);
+      samples.push(Math.round(performance.now() - t));
+    }
+    return NextResponse.json({ ok: true, env: process.env.APP_ENV ?? "unknown", dbMs: samples, region: process.env.AWS_REGION ?? null, time: new Date().toISOString() });
   } catch {
     return NextResponse.json({ ok: false }, { status: 503 });
   }

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { EVENT_TYPE_LABEL } from "@/lib/format";
 import { db } from "../db";
 import { availability, categories, events, locations, providers } from "../db/schema";
+import { getActiveCategories, getActiveLocations } from "../services/catalog-cache";
 import { computePlan, latestPlan, savePlan, type ComputedPlan, type EventTypeKey } from "../services/planning";
 import { searchProviders, type ProviderCard } from "../services/search";
 import { matchLocation } from "./extract";
@@ -44,11 +45,12 @@ export const TOOL_DEFS = [
   {
     name: "montar_planejamento",
     description:
-      "Gera (ou refaz) o planejamento com os serviços escolhidos. O sistema calcula estimativas e a distribuição do orçamento — use os números retornados, nunca invente outros.",
+      "Gera (ou refaz) o planejamento. Pode receber em 'evento' os dados novos da festa (mesmos campos de atualizar_evento), aplicados antes do cálculo — use isso para fazer tudo numa chamada só. O sistema calcula estimativas e a distribuição do orçamento e JÁ BUSCA fornecedores reais para as categorias essenciais (até 4). Use os números e fornecedores retornados; nunca invente outros.",
     input_schema: {
       type: "object",
       required: ["itens"],
       properties: {
+        evento: { type: "object", description: "Opcional. Mesmos campos de atualizar_evento.", additionalProperties: true },
         itens: {
           type: "array",
           minItems: 1,
@@ -63,6 +65,7 @@ export const TOOL_DEFS = [
             },
           },
         },
+        buscar_fornecedores: { type: "boolean", description: "Padrão true: já traz fornecedores das categorias essenciais." },
       },
     },
   },
@@ -109,6 +112,8 @@ const updateSchema = z.object({
   preferencias: z.record(z.string(), z.unknown()).optional(),
 });
 const planSchema = z.object({
+  evento: z.record(z.string(), z.unknown()).optional(),
+  buscar_fornecedores: z.boolean().optional(),
   itens: z
     .array(z.object({ categoria_slug: z.string(), prioridade: z.enum(["ESSENTIAL", "RECOMMENDED", "OPTIONAL"]), motivo: z.string().max(300).optional() }))
     .min(1)
@@ -147,6 +152,79 @@ export async function eventSnapshot(eventId: string) {
   };
 }
 
+type EventRow = typeof events.$inferSelect;
+
+/** Aplica dados do evento informados pela IA. Retorna aviso sobre a localização, se houver. */
+async function applyEventUpdate(eventId: string, input: z.infer<typeof updateSchema>): Promise<string | undefined> {
+  const patch: Partial<typeof events.$inferInsert> = {};
+  if (input.tipo) patch.type = input.tipo;
+  if (input.titulo) patch.title = input.titulo;
+  else if (input.tipo) patch.title = EVENT_TYPE_LABEL[input.tipo];
+  if (input.data) patch.date = input.data;
+  if (input.data_flexivel != null) patch.dateFlexible = input.data_flexivel;
+  if (input.convidados) patch.guests = input.convidados;
+  if (input.orcamento_total_reais != null) patch.budgetTotal = Math.round(input.orcamento_total_reais * 100);
+  if (input.ja_tem_local != null) patch.hasVenue = input.ja_tem_local;
+  let locationNote: string | undefined;
+  if (input.bairro_ou_cidade) {
+    const m = matchLocation(input.bairro_ou_cidade, await getActiveLocations());
+    patch.locationText = input.bairro_ou_cidade;
+    if (m && !m.needsNeighborhood) patch.locationId = m.loc.id;
+    else if (m) locationNote = `Cidade reconhecida (${m.loc.city}), mas é grande demais para calcular distâncias. Pergunte o bairro ou a região (ex.: Barra, Tijuca, Campo Grande).`;
+    else locationNote = `"${input.bairro_ou_cidade}" ainda não está na área de cobertura cadastrada (Região Metropolitana do Rio). Pergunte um bairro ou município próximo.`;
+  }
+  if (input.preferencias) {
+    const cur = await db.query.events.findFirst({ where: eq(events.id, eventId), columns: { preferences: true } });
+    patch.preferences = { ...(cur?.preferences ?? {}), ...input.preferencias };
+  }
+  if (Object.keys(patch).length) await db.update(events).set(patch).where(eq(events.id, eventId));
+  return locationNote;
+}
+
+/** Busca fornecedores reais de uma categoria para o evento e registra os cards na interface. */
+async function runSearch(
+  ev: EventRow,
+  categorySlug: string,
+  opts: { budgetMax?: number | null; query?: string | null; limit?: number },
+  ui: UiPayload,
+) {
+  const cat = (await getActiveCategories()).find((c) => c.slug === categorySlug);
+  if (!cat) return null;
+  const res = await searchProviders({
+    categorySlugs: [cat.slug],
+    locationId: ev.locationId,
+    date: ev.date,
+    guests: ev.guests,
+    budgetMax: opts.budgetMax ?? null,
+    query: opts.query,
+    limit: opts.limit ?? 4,
+  });
+  ui.recommendations = [
+    ...(ui.recommendations ?? []).filter((r) => r.categorySlug !== cat.slug),
+    { categorySlug: cat.slug, categoryName: cat.name, providers: res.providers, excluded: res.excluded },
+  ];
+  return {
+    categoria: cat.name,
+    categoria_slug: cat.slug,
+    encontrados: res.providers.length,
+    filtros_aplicados: { regiao: Boolean(ev.locationId), data: ev.date, convidados: ev.guests },
+    descartados: { indisponiveis_na_data: res.excluded.unavailable, fora_da_area: res.excluded.outOfArea, capacidade: res.excluded.capacity },
+    fornecedores: res.providers.map((p) => ({
+      slug: p.slug,
+      nome: p.tradeName,
+      bairro: p.location.name,
+      distancia_km: p.distanceKm,
+      faixa_preco_reais: p.priceMin != null ? [p.priceMin / 100, (p.priceMax ?? p.priceMin) / 100] : null,
+      nota: p.avgRating,
+      avaliacoes: p.reviewCount,
+      verificado: p.verified,
+      is_demo: p.isDemo,
+      motivos: p.reasons,
+      atencao: p.warnings,
+    })),
+  };
+}
+
 export async function executeTool(
   name: string,
   rawInput: unknown,
@@ -157,38 +235,16 @@ export async function executeTool(
     switch (name) {
       case "atualizar_evento": {
         const input = updateSchema.parse(rawInput);
-        const patch: Partial<typeof events.$inferInsert> = {};
-        if (input.tipo) patch.type = input.tipo;
-        if (input.titulo) patch.title = input.titulo;
-        else if (input.tipo) patch.title = EVENT_TYPE_LABEL[input.tipo];
-        if (input.data) patch.date = input.data;
-        if (input.data_flexivel != null) patch.dateFlexible = input.data_flexivel;
-        if (input.convidados) patch.guests = input.convidados;
-        if (input.orcamento_total_reais != null) patch.budgetTotal = Math.round(input.orcamento_total_reais * 100);
-        if (input.ja_tem_local != null) patch.hasVenue = input.ja_tem_local;
-        let locationNote: string | undefined;
-        if (input.bairro_ou_cidade) {
-          const all = await db.select({ id: locations.id, name: locations.name, city: locations.city }).from(locations).where(eq(locations.active, true));
-          const m = matchLocation(input.bairro_ou_cidade, all);
-          patch.locationText = input.bairro_ou_cidade;
-          if (m && !m.needsNeighborhood) patch.locationId = m.loc.id;
-          else if (m) locationNote = `Cidade reconhecida (${m.loc.city}), mas é grande demais para calcular distâncias. Pergunte o bairro ou a região (ex.: Barra, Tijuca, Campo Grande).`;
-          else locationNote = `"${input.bairro_ou_cidade}" ainda não está na área de cobertura cadastrada (Região Metropolitana do Rio). Pergunte um bairro ou município próximo.`;
-        }
-        if (input.preferencias) {
-          const cur = await db.query.events.findFirst({ where: eq(events.id, ctx.eventId), columns: { preferences: true } });
-          patch.preferences = { ...(cur?.preferences ?? {}), ...input.preferencias };
-        }
-        if (Object.keys(patch).length) await db.update(events).set(patch).where(eq(events.id, ctx.eventId));
-        return { result: { evento: await eventSnapshot(ctx.eventId), aviso_local: locationNote } };
+        const aviso = await applyEventUpdate(ctx.eventId, input);
+        return { result: { evento: await eventSnapshot(ctx.eventId), aviso_local: aviso } };
       }
 
       case "montar_planejamento": {
         const input = planSchema.parse(rawInput);
+        const aviso = input.evento ? await applyEventUpdate(ctx.eventId, updateSchema.parse(input.evento)) : undefined;
         const ev = await db.query.events.findFirst({ where: eq(events.id, ctx.eventId) });
         if (!ev) throw new Error("Evento não encontrado");
-        const valid = await db.select({ slug: categories.slug }).from(categories).where(eq(categories.active, true));
-        const validSet = new Set(valid.map((v) => v.slug));
+        const validSet = new Set((await getActiveCategories()).map((c) => c.slug));
         const unknown = input.itens.filter((i) => !validSet.has(i.categoria_slug)).map((i) => i.categoria_slug);
         const plan = await computePlan({
           items: input.itens.filter((i) => validSet.has(i.categoria_slug)).map((i) => ({ slug: i.categoria_slug, priority: i.prioridade, rationale: i.motivo })),
@@ -198,8 +254,17 @@ export async function executeTool(
         });
         const saved = await savePlan(ctx.eventId, plan, "AI", PROMPT_VERSION);
         ui.plan = { ...plan, version: saved.version };
+        // Busca automática (em paralelo) das essenciais: poupa uma rodada inteira do modelo
+        let fornecedores: unknown;
+        if (input.buscar_fornecedores !== false && ev.locationId) {
+          const essentials = plan.lines.filter((l) => l.priority === "ESSENTIAL").slice(0, 4);
+          const found = await Promise.all(essentials.map((l) => runSearch(ev, l.slug, { budgetMax: l.allocated, limit: 4 }, ui)));
+          fornecedores = found.filter(Boolean);
+        }
         return {
           result: {
+            evento: input.evento ? await eventSnapshot(ctx.eventId) : undefined,
+            aviso_local: aviso,
             versao: saved.version,
             resumo: plan.summary,
             itens: plan.lines.map((l) => ({
@@ -213,6 +278,7 @@ export async function executeTool(
             alertas: plan.warnings,
             dicas_economia: plan.savingsTips,
             categorias_desconhecidas_ignoradas: unknown,
+            fornecedores_por_categoria: fornecedores ?? (ev.locationId ? "não buscados" : "não buscados: bairro ainda não informado"),
             observacao: "Valores são ESTIMATIVAS de referência, não orçamentos de fornecedores.",
           },
         };
@@ -222,42 +288,14 @@ export async function executeTool(
         const input = searchSchema.parse(rawInput);
         const ev = await db.query.events.findFirst({ where: eq(events.id, ctx.eventId) });
         if (!ev) throw new Error("Evento não encontrado");
-        const cat = await db.query.categories.findFirst({ where: eq(categories.slug, input.categoria_slug) });
-        if (!cat) return { result: { erro: `Categoria '${input.categoria_slug}' não existe no catálogo.` }, isError: true };
-        const res = await searchProviders({
-          categorySlugs: [cat.slug],
-          locationId: ev.locationId,
-          date: ev.date,
-          guests: ev.guests,
-          budgetMax: input.budget_max_reais != null ? Math.round(input.budget_max_reais * 100) : null,
-          query: input.termo,
-          limit: input.limite ?? 4,
-        });
-        ui.recommendations = [
-          ...(ui.recommendations ?? []).filter((r) => r.categorySlug !== cat.slug),
-          { categorySlug: cat.slug, categoryName: cat.name, providers: res.providers, excluded: res.excluded },
-        ];
-        return {
-          result: {
-            categoria: cat.name,
-            encontrados: res.providers.length,
-            filtros_aplicados: { regiao: Boolean(ev.locationId), data: ev.date, convidados: ev.guests },
-            descartados: { indisponiveis_na_data: res.excluded.unavailable, fora_da_area: res.excluded.outOfArea, capacidade: res.excluded.capacity },
-            fornecedores: res.providers.map((p) => ({
-              slug: p.slug,
-              nome: p.tradeName,
-              bairro: p.location.name,
-              distancia_km: p.distanceKm,
-              faixa_preco_reais: p.priceMin != null ? [p.priceMin / 100, (p.priceMax ?? p.priceMin) / 100] : null,
-              nota: p.avgRating,
-              avaliacoes: p.reviewCount,
-              verificado: p.verified,
-              is_demo: p.isDemo,
-              motivos: p.reasons,
-              atencao: p.warnings,
-            })),
-          },
-        };
+        const res = await runSearch(
+          ev,
+          input.categoria_slug,
+          { budgetMax: input.budget_max_reais != null ? Math.round(input.budget_max_reais * 100) : null, query: input.termo, limit: input.limite ?? 4 },
+          ui,
+        );
+        if (!res) return { result: { erro: `Categoria '${input.categoria_slug}' não existe no catálogo.` }, isError: true };
+        return { result: res };
       }
 
       case "verificar_disponibilidade": {

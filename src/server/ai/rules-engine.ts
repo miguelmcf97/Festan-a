@@ -17,9 +17,11 @@ export class RulesEngine implements PlannerEngine {
   id = "demo-rules";
   model = "demo-rules";
 
-  async run({ userMessage, ctx, ui }: EngineRun): Promise<EngineResult> {
+  async run({ userMessage, ctx, ui, events: progress }: EngineRun): Promise<EngineResult> {
     const toolCalls: EngineResult["toolCalls"] = [];
+    const STATUS: Record<string, string> = { atualizar_evento: "Anotando os detalhes da festa…", montar_planejamento: "Montando o planejamento…", buscar_fornecedores: "Buscando fornecedores na sua região…" };
     const call = async (name: string, input: unknown) => {
+      progress?.onStatus?.(STATUS[name] ?? "Consultando o catálogo…");
       const r = await executeTool(name, input, ctx, ui);
       toolCalls.push({ name, input, result: r.result });
       return r.result as Record<string, unknown>;
@@ -124,7 +126,7 @@ export class RulesEngine implements PlannerEngine {
       items.push({ categoria_slug: p.slug, prioridade, motivo: desired.size ? "Sugestão comum para este tipo de festa" : undefined });
     }
     const final = items.filter((i) => !removed.has(i.categoria_slug) && !(snap.ja_tem_local && i.categoria_slug === "espaco-de-festas"));
-    const planRes = await call("montar_planejamento", { itens: final });
+    const planRes = await call("montar_planejamento", { itens: final, buscar_fornecedores: false });
     const planItems = (planRes.itens as { categoria: string; nome: string; prioridade: string; verba_sugerida_reais: number }[]) ?? [];
 
     // Busca fornecedores: pedidos explícitos primeiro, depois essenciais (até 4)
