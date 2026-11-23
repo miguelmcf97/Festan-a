@@ -1,6 +1,6 @@
 # Arquitetura técnica
 
-> Última revisão: 19/11/2026
+> Última revisão: 23/11/2026
 
 ## 1. Decisões e justificativas
 
@@ -104,7 +104,23 @@ Navegador ──POST /api/ai/chat──► rate limit (usuário/visitante + IP)
           Resposta: texto + UiPayload { plano, recomendações (cards) } + estado do evento
 ```
 
-Controles: histórico limitado a 12 mensagens (o estado vai estruturado), `max_tokens` 1.500, validação zod de todas as entradas de ferramenta, categorias desconhecidas ignoradas e reportadas, erro do provedor → mensagem amigável sem perder o plano. Versão do prompt em `PROMPT_VERSION`; nova versão = novo identificador (não editar o histórico).
+Controles: histórico limitado a 12 mensagens (o estado vai estruturado), `max_tokens` 900, validação zod de todas as entradas de ferramenta, categorias desconhecidas ignoradas e reportadas, erro do provedor → mensagem amigável sem perder o plano. Versão do prompt em `PROMPT_VERSION` (atual: `planner-v1.1.0`); nova versão = novo identificador (não editar o histórico).
+
+**Desempenho (prompt v1.1, 23/11/2026).** Medido no site de teste (Netlify em Ohio + Neon em outra região), primeira mensagem do exemplo do briefing: **25,2 s → 13,9 s** no total, com o primeiro sinal de progresso em ~3 s.
+
+| O que mudou | Efeito |
+|---|---|
+| `montar_planejamento` aceita `evento` e já busca fornecedores das essenciais (em paralelo) | 2 rodadas do modelo em vez de 4+ |
+| Ferramentas da mesma rodada em paralelo (atualizações do evento primeiro) | menos espera em buscas múltiplas |
+| Cache de prompt só na parte fixa (instruções + catálogo); estado do evento em bloco separado | o cache passa a ser aproveitado entre mensagens |
+| Respostas ≤ 90 palavras, `max_tokens` 900 | menos tokens de saída (o que mais pesa no tempo do modelo) |
+| `/api/ai/chat` transmite NDJSON (`status`, `text`, `reset`, `done`) | a tela mostra o que a IA está fazendo e o texto enquanto é escrito |
+| Catálogo e localidades em cache de 60 s; consultas do agente em paralelo | menos idas ao banco |
+| Tempos por fase nos logs (`ai.timing`) e `dbMs` no `/api/health` | medir antes de otimizar |
+
+Composição medida: modelo 5,8 s; ferramentas 4,3 s; preparação 2,5 s; gravação 0,8 s. A maior parte do tempo fora do modelo são idas ao banco a **126 ms cada**, porque o banco está em outra região que as funções. Com o banco na mesma região das funções (ou na VPS, junto da aplicação), o total esperado cai para ~6–7 s.
+
+Testes locais do caminho com LLM sem chave de API: `node tests/mock-anthropic.mjs` (simula a API com transmissão) e `ANTHROPIC_BASE_URL=http://localhost:4010 ANTHROPIC_API_KEY=teste AI_PROVIDER=anthropic npm run dev`.
 
 **Configuração:** `AI_PROVIDER=anthropic|demo-rules`, `AI_MODEL`, `ANTHROPIC_API_KEY`. Sem chave → modo demonstração, sinalizado na interface.
 

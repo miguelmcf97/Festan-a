@@ -21,6 +21,8 @@
 6. Fornecedor confirma → cliente vê "Contato do fornecedor" (liberado só após confirmação).
 7. Admin aprova fornecedor pendente; páginas de admin respondem 200.
 
+Em 23/11/2026 (prompt v1.1): E2E completo de novo sem erros; caminho com LLM testado com o simulador da API (`tests/mock-anthropic.mjs`): 2 rodadas, evento + plano + 3 buscas em paralelo numa chamada, texto transmitido, parte fixa do prompt com `cache_control`. No site publicado com o Claude real: 13,9 s (antes 25,2 s).
+
 Bugs encontrados e corrigidos pelos testes: bairro com acento seguido de vírgula ("Jacarepaguá,") não era reconhecido; "ainda não tenho local" virava local "local"; resposta da IA sem quebra de parágrafo; painel do plano cortado em telas baixas.
 
 ## 2. Checklist manual antes de cada release

@@ -5,8 +5,13 @@ Uso: python3 scripts/financial_model.py  → imprime tabelas em Markdown (colada
 """
 from dataclasses import dataclass
 
-USD_BRL = 5.14  # [fonte] cotação de referência citada em matéria de mai/2025; atualizar
-AI_COST_PER_CONVERSATION_USD = 0.15  # ~8 turnos × (6k tokens entrada + 600 saída) no Sonnet 5.5 ($2/$10 por MTok) [fonte de preço: tabela da API]
+USD_BRL = 5.87  # [fonte] dólar comercial no fechamento de 18/11/2026 (Brasil 61); atualizar
+# Custo de IA = chamadas por conversa × tokens × preço. Preços do Claude Sonnet 5.5: US$ 2 (entrada) / US$ 10 (saída) por milhão de tokens [fonte: tabela da API]
+AI_CALLS_PER_CONVERSATION = 8       # ~4 mensagens da pessoa × 2 rodadas do modelo (prompt v1.1)
+AI_INPUT_TOKENS_PER_CALL = 6000     # instruções + catálogo + estado do evento + resultados das ferramentas
+AI_OUTPUT_TOKENS_PER_CALL = 600
+AI_PRICE_USD_PER_MTOK = (2.0, 10.0)
+AI_COST_PER_CONVERSATION_USD = AI_CALLS_PER_CONVERSATION * (AI_INPUT_TOKENS_PER_CALL * AI_PRICE_USD_PER_MTOK[0] + AI_OUTPUT_TOKENS_PER_CALL * AI_PRICE_USD_PER_MTOK[1]) / 1e6  # ≈ US$ 0,144
 
 
 @dataclass

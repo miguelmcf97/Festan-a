@@ -1,6 +1,7 @@
 import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
+import { getActiveCategories } from "./catalog-cache";
 import { categories, eventPlans, planItems } from "../db/schema";
 
 export type Priority = "ESSENTIAL" | "RECOMMENDED" | "OPTIONAL";
@@ -148,9 +149,8 @@ export async function computePlan(input: {
   eventTypeLabel: string;
 }): Promise<ComputedPlan> {
   const slugs = [...new Set(input.items.map((i) => i.slug))];
-  const cats = slugs.length
-    ? await db.select().from(categories).where(and(inArray(categories.slug, slugs), eq(categories.active, true)))
-    : [];
+  // catálogo em cache (evita uma ida ao banco por planejamento)
+  const cats = slugs.length ? (await getActiveCategories()).filter((c) => slugs.includes(c.slug)) : [];
   const bySlug = new Map(cats.map((c) => [c.slug, c]));
   const guests = Math.max(input.guests ?? 50, 1);
 
