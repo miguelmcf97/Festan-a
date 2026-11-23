@@ -10,3 +10,6 @@
 [build.environment]
   NODE_VERSION = "22"
   NEXT_TELEMETRY_DISABLED = "1"
+  # APP_ENV não é segredo (staging/production aparecem nos arquivos do projeto).
+  # A DATABASE_URL e a ANTHROPIC_API_KEY continuam protegidas pela verificação de segredos.
+  SECRETS_SCAN_OMIT_KEYS = "APP_ENV"
