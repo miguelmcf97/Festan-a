@@ -6,3 +6,4 @@ node_modules
 *.dump
 next-env.d.ts
 *.tsbuildinfo
+__pycache__/
