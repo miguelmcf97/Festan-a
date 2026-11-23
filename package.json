@@ -10,7 +10,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx scripts/seed.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:seed:if-empty": "tsx scripts/seed.ts --if-empty",
+    "build:netlify": "npm run db:migrate && npm run db:seed:if-empty && next build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.11.0",

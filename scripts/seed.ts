@@ -124,6 +124,15 @@ const DESCRIPTIONS: Record<string, string> = {
 };
 
 async function main() {
+  // --if-empty: usado no deploy de teste (Netlify) para não apagar dados criados durante os testes
+  if (process.argv.includes("--if-empty")) {
+    const [{ n }] = await client`select count(*)::int as n from categories`;
+    if (n > 0) {
+      console.log("✓ banco já tem dados — seed ignorado (--if-empty)");
+      await client.end();
+      return;
+    }
+  }
   console.log("→ limpando tabelas (demo)…");
   await client.unsafe(`TRUNCATE ${[
     "audit_logs", "notifications", "transactions", "complaints", "reviews", "bookings", "proposals", "quote_messages",

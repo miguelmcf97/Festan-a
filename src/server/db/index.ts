@@ -7,9 +7,17 @@ const globalForDb = globalThis as unknown as { pgClient?: ReturnType<typeof post
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL não configurada");
 
-// Reutiliza a conexão em desenvolvimento (hot reload)
-const client = globalForDb.pgClient ?? postgres(url, { max: Number(process.env.DB_POOL_MAX ?? 10) });
-if (process.env.NODE_ENV !== "production") globalForDb.pgClient = client;
+// Em funções serverless (Netlify/AWS Lambda) cada instância abre no máximo 1 conexão.
+const serverless = Boolean(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const client =
+  globalForDb.pgClient ??
+  postgres(url, {
+    max: Number(process.env.DB_POOL_MAX ?? (serverless ? 1 : 10)),
+    // Poolers em modo transação (ex.: Neon "-pooler") não mantêm prepared statements entre conexões
+    prepare: !url.includes("-pooler"),
+    idle_timeout: serverless ? 20 : undefined,
+  });
+globalForDb.pgClient = client;
 
 export const db = drizzle(client, { schema });
 export type DB = typeof db;

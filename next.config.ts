@@ -23,7 +23,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  output: "standalone", // imagem Docker enxuta para a VPS
+  // imagem Docker enxuta para a VPS; na Netlify o adaptador oficial cuida do empacotamento
+  output: process.env.NETLIFY ? undefined : "standalone",
   poweredByHeader: false,
   serverExternalPackages: ["postgres", "bcryptjs"],
   async headers() {

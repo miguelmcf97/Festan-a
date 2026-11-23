@@ -1,0 +1,12 @@
+# Deploy de TESTE na Netlify (o destino de produção planejado continua sendo a VPS — ver docs/ARQUITETURA_TECNICA.md).
+# Variáveis obrigatórias no painel da Netlify (Project configuration → Environment variables):
+#   DATABASE_URL  = connection string do Postgres (ex.: Neon, com ?sslmode=require)
+#   APP_ENV       = staging   (mantém a faixa "Ambiente de demonstração" e permite o seed demo)
+# Opcional: ANTHROPIC_API_KEY (sem ela, a IA roda em modo demonstração)
+[build]
+  command = "npm run build:netlify"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NEXT_TELEMETRY_DISABLED = "1"
