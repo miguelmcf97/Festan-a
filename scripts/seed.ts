@@ -8,13 +8,14 @@
 import bcrypt from "bcryptjs";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { normalizeDbUrl } from "../src/lib/db-url";
 import * as s from "../src/server/db/schema";
 
 if (process.env.APP_ENV === "production") {
   console.error("Seed de demonstração bloqueado em produção.");
   process.exit(1);
 }
-const client = postgres(process.env.DATABASE_URL!, { max: 1 });
+const client = postgres(normalizeDbUrl(process.env.DATABASE_URL), { max: 1 });
 const db = drizzle(client, { schema: s });
 
 const R = (reais: number) => reais * 100;

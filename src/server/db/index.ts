@@ -1,11 +1,11 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { normalizeDbUrl } from "@/lib/db-url";
 import * as schema from "./schema";
 
 const globalForDb = globalThis as unknown as { pgClient?: ReturnType<typeof postgres> };
 
-const url = process.env.DATABASE_URL;
-if (!url) throw new Error("DATABASE_URL não configurada");
+const url = normalizeDbUrl(process.env.DATABASE_URL);
 
 // Em funções serverless (Netlify/AWS Lambda) cada instância abre no máximo 1 conexão.
 const serverless = Boolean(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);

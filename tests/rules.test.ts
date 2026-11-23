@@ -3,6 +3,7 @@ import { isValidCNPJ, isValidCPF } from "@/lib/br-docs";
 import { haversineKm } from "@/lib/geo";
 import { assertTransition, QUOTE_TRANSITIONS } from "@/lib/quote-rules";
 import { formatBRL, reaisToCents } from "@/lib/format";
+import { normalizeDbUrl } from "@/lib/db-url";
 import { extractEventInfo, matchLocation, parseDate } from "@/server/ai/extract";
 
 describe("máquina de estados da solicitação", () => {
@@ -96,5 +97,16 @@ describe("localização", () => {
     const d = haversineKm({ lat: -23.0004, lng: -43.3659 }, { lat: -22.925, lng: -43.233 });
     expect(d).toBeGreaterThan(12);
     expect(d).toBeLessThan(18);
+  });
+});
+
+describe("connection string", () => {
+  it("remove channel_binding do Neon e mantém sslmode", () => {
+    const u = normalizeDbUrl("postgresql://u:p@ep-x-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require");
+    expect(u).not.toContain("channel_binding");
+    expect(u).toContain("sslmode=require");
+  });
+  it("aceita aspas coladas por engano", () => {
+    expect(normalizeDbUrl("'postgresql://u:p@h/db?channel_binding=require'")).toBe("postgresql://u:p@h/db");
   });
 });
