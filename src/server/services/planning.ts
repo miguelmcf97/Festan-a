@@ -2,6 +2,8 @@ import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { getActiveCategories } from "./catalog-cache";
+import { formatBRL } from "@/lib/format";
+import { categoryName, makeT, type Lang } from "@/lib/i18n";
 import { categories, eventPlans, planItems } from "../db/schema";
 
 export type Priority = "ESSENTIAL" | "RECOMMENDED" | "OPTIONAL";
@@ -147,7 +149,10 @@ export async function computePlan(input: {
   guests: number | null;
   budget: number | null; // centavos
   eventTypeLabel: string;
+  lang?: Lang;
 }): Promise<ComputedPlan> {
+  const t = makeT(input.lang ?? "pt");
+  const fmt = (c: number) => formatBRL(c);
   const slugs = [...new Set(input.items.map((i) => i.slug))];
   // catálogo em cache (evita uma ida ao banco por planejamento)
   const cats = slugs.length ? (await getActiveCategories()).filter((c) => slugs.includes(c.slug)) : [];
@@ -175,7 +180,7 @@ export async function computePlan(input: {
     lines.push({
       categoryId: c.id,
       slug: c.slug,
-      name: c.name,
+      name: categoryName(c, input.lang ?? "pt"),
       icon: c.icon,
       priority: item.priority,
       estMin: roundTo(estMin, 5000),
@@ -204,26 +209,35 @@ export async function computePlan(input: {
     const essentialsMin = lines.filter((l) => l.priority === "ESSENTIAL").reduce((s, l) => s + l.estMin, 0);
     if (essentialsMin > budget) {
       warnings.push(
-        "O orçamento está abaixo do mínimo estimado só para os itens essenciais. Vale rever o número de convidados, o formato (ex.: coquetel em vez de jantar) ou o local.",
+        t(
+          "O orçamento está abaixo do mínimo estimado só para os itens essenciais. Vale rever o número de convidados, o formato (ex.: coquetel em vez de jantar) ou o local.",
+          "The budget is below the minimum estimate for the essential items alone. Consider fewer guests, a different format (e.g. cocktail instead of dinner) or another venue.",
+        ),
       );
     } else if (totalEstMin > budget) {
-      warnings.push("Com todos os itens, a estimativa mínima passa do orçamento. Priorize os essenciais e trate os opcionais como extras.");
+      warnings.push(t("Com todos os itens, a estimativa mínima passa do orçamento. Priorize os essenciais e trate os opcionais como extras.", "With every item included, the minimum estimate exceeds the budget. Prioritize the essentials and treat the optional items as extras."));
     }
-    for (const l of lines) if (l.allocated < l.estMin * 0.85) l.rationale = appendNote(l.rationale, "verba sugerida abaixo da faixa estimada");
+    for (const l of lines) if (l.allocated < l.estMin * 0.85) l.rationale = appendNote(l.rationale, t("verba sugerida abaixo da faixa estimada", "suggested budget below the estimated range"));
   } else if (!budget) {
     lines.forEach((l) => (l.allocated = Math.round((l.estMin + l.estMax) / 2)));
   }
 
   const has = (s: string) => lines.some((l) => l.slug === s);
-  if (has("buffet") && guests >= 60) savingsTips.push("Buffet costuma ser o maior custo: coquetel volante ou almoço tendem a sair mais barato que jantar completo.");
-  if (has("espaco-de-festas")) savingsTips.push("Datas de domingo a quinta e meses de baixa temporada costumam ter preços melhores nos espaços.");
-  if (has("decoracao")) savingsTips.push("Decoração no formato pegue-e-monte reduz custo quando a festa é menor.");
-  if (has("fotografia") && has("filmagem")) savingsTips.push("Contratar foto e vídeo com o mesmo fornecedor costuma gerar desconto de pacote.");
-  savingsTips.push("Peça orçamento a 2 ou 3 fornecedores por categoria e compare o que está incluso, não só o preço.");
+  if (has("buffet") && guests >= 60) savingsTips.push(t("Buffet costuma ser o maior custo: coquetel volante ou almoço tendem a sair mais barato que jantar completo.", "Catering is usually the biggest cost: a standing cocktail or lunch tends to be cheaper than a full dinner."));
+  if (has("espaco-de-festas")) savingsTips.push(t("Datas de domingo a quinta e meses de baixa temporada costumam ter preços melhores nos espaços.", "Venues are usually cheaper from Sunday to Thursday and in the low season."));
+  if (has("decoracao")) savingsTips.push(t("Decoração no formato pegue-e-monte reduz custo quando a festa é menor.", "Pick-up-and-assemble decoration kits cut costs for smaller parties."));
+  if (has("fotografia") && has("filmagem")) savingsTips.push(t("Contratar foto e vídeo com o mesmo fornecedor costuma gerar desconto de pacote.", "Booking photo and video with the same vendor usually earns a package discount."));
+  savingsTips.push(t("Peça orçamento a 2 ou 3 fornecedores por categoria e compare o que está incluso, não só o preço.", "Ask 2 or 3 vendors per category for a quote and compare what is included, not just the price."));
 
   const summary = budget
-    ? `${input.eventTypeLabel} para ${guests} pessoas com orçamento de ${fmt(budget)}. Estimativa para os ${lines.length} serviços: ${fmt(totalEstMin)} a ${fmt(totalEstMax)}, com reserva de ${fmt(reserve)} para imprevistos.`
-    : `${input.eventTypeLabel} para ${guests} pessoas. Estimativa para os ${lines.length} serviços: ${fmt(totalEstMin)} a ${fmt(totalEstMax)}. Informe um orçamento para eu distribuir a verba.`;
+    ? t(
+        `${input.eventTypeLabel} para ${guests} pessoas com orçamento de ${fmt(budget)}. Estimativa para os ${lines.length} serviços: ${fmt(totalEstMin)} a ${fmt(totalEstMax)}, com reserva de ${fmt(reserve)} para imprevistos.`,
+        `${input.eventTypeLabel} for ${guests} people with a ${fmt(budget)} budget. Estimate for the ${lines.length} services: ${fmt(totalEstMin)} to ${fmt(totalEstMax)}, with ${fmt(reserve)} set aside for contingencies.`,
+      )
+    : t(
+        `${input.eventTypeLabel} para ${guests} pessoas. Estimativa para os ${lines.length} serviços: ${fmt(totalEstMin)} a ${fmt(totalEstMax)}. Informe um orçamento para eu distribuir a verba.`,
+        `${input.eventTypeLabel} for ${guests} people. Estimate for the ${lines.length} services: ${fmt(totalEstMin)} to ${fmt(totalEstMax)}. Share a budget and I will split it across the services.`,
+      );
 
   return { lines, totalEstMin, totalEstMax, budget, reserve, summary, savingsTips: savingsTips.slice(0, 4), warnings };
 }
@@ -265,7 +279,4 @@ function roundTo(v: number, step: number) {
 }
 function appendNote(a: string | null, b: string) {
   return a ? `${a} (${b})` : b.charAt(0).toUpperCase() + b.slice(1);
-}
-function fmt(c: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(c / 100);
 }

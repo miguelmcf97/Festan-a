@@ -2,8 +2,8 @@ import clsx from "clsx";
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
 import {
-  Armchair, BadgeCheck, Beef, Building2, Cake, Camera, Candy, Castle, ClipboardCheck, Disc3, Drama, Flower2,
-  Lamp, MicVocal, PartyPopper, Popcorn, Sparkles, Speaker, Star, Tent, Trees, Truck, Utensils, Video,
+  Armchair, Beef, Building2, Cake, Camera, Candy, Castle, ClipboardCheck, Disc3, Drama, Flower2,
+  Lamp, MicVocal, PartyPopper, Popcorn, Sparkles, Speaker, Tent, Trees, Truck, Utensils, Video,
   type LucideIcon,
 } from "lucide-react";
 
@@ -38,39 +38,8 @@ export function LinkButton({ variant = "primary", size = "md", className, ...pro
   return <Link className={clsx(buttonBase, buttonVariants[variant], buttonSizes[size], className)} {...props} />;
 }
 
-export function Badge({ tone = "neutral", children, className }: { tone?: "neutral" | "green" | "yellow" | "red" | "ink"; children: ReactNode; className?: string }) {
-  const tones = {
-    neutral: "bg-surface text-ink-soft",
-    green: "bg-folha-soft text-folha",
-    yellow: "bg-maracuja-soft text-[#7a5300]",
-    red: "bg-pitanga-soft text-pitanga-dark",
-    ink: "bg-ink text-white",
-  };
-  return <span className={clsx("inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold", tones[tone], className)}>{children}</span>;
-}
-
-export function VerifiedBadge({ verified }: { verified: boolean }) {
-  return verified ? (
-    <Badge tone="green"><BadgeCheck className="size-3.5" /> Verificado</Badge>
-  ) : (
-    <Badge>Não verificado</Badge>
-  );
-}
-
-export function DemoBadge() {
-  return <Badge tone="yellow" className="whitespace-nowrap">Demonstração</Badge>;
-}
-
-export function Stars({ value, count }: { value: number | null; count: number }) {
-  if (value == null || count === 0) return <span className="text-sm text-ink-soft">Sem avaliações ainda</span>;
-  return (
-    <span className="inline-flex items-center gap-1 text-sm">
-      <Star className="size-4 fill-maracuja text-maracuja" aria-hidden />
-      <strong>{value.toFixed(1).replace(".", ",")}</strong>
-      <span className="text-ink-soft">({count} {count === 1 ? "avaliação" : "avaliações"})</span>
-    </span>
-  );
-}
+export { Badge } from "./badge";
+export { VerifiedBadge, DemoBadge, Stars } from "./ui-text";
 
 const TONES: Record<string, string> = {
   violet: "#6d4bd1", emerald: "#0f8a68", amber: "#d98a00", teal: "#0f7f86", sky: "#1f86c9", rose: "#d6455d",

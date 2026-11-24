@@ -23,6 +23,14 @@
 
 Em 23/11/2026 (prompt v1.1): E2E completo de novo sem erros; caminho com LLM testado com o simulador da API (`tests/mock-anthropic.mjs`): 2 rodadas, evento + plano + 3 buscas em paralelo numa chamada, texto transmitido, parte fixa do prompt com `cache_control`. No site publicado com o Claude real: 13,9 s (antes 25,2 s).
 
+Em 24/11/2026 (prompt v1.2, Haiku, idiomas, agenda, categoria única, limite de 3 mensagens): tipos ✅, build ✅, unitários ✅ 24/24 (novos: idioma, rótulos, datas, mensagens traduzidas), E2E ✅ sem erros de JavaScript, com os passos novos:
+8. Fornecedor abre a agenda: a data da festa confirmada aparece **Fechada**; um toque bloqueia e outro libera um dia; bloqueio de período de 3 dias.
+9. Perfil do fornecedor tem uma única categoria marcada (rádio) e o formulário de serviço não pede categoria.
+10. Admin: aprova na aba "Aprovar", concede selo na aba "Verificar", remove na aba "Remover selo"; lista ordenada pela data da solicitação; campo do limite de IA mostra 3.
+11. Troca para inglês (menu, páginas do admin) e volta para português.
+12. Visitante novo: contador "3 de 3", envia 3 mensagens, o campo some com o aviso de limite e a API responde 429 `AI_LIMIT` à 4ª.
+Com o simulador da API: a requisição sai com `claude-haiku-5-5`, idioma `en` e "mensagens restantes" no prompt; o plano volta em inglês. Também testada a migração de categoria única sobre a base antiga (41 vínculos → 31, 9 serviços desativados, nada apagado).
+
 Bugs encontrados e corrigidos pelos testes: bairro com acento seguido de vírgula ("Jacarepaguá,") não era reconhecido; "ainda não tenho local" virava local "local"; resposta da IA sem quebra de parágrafo; painel do plano cortado em telas baixas.
 
 ## 2. Checklist manual antes de cada release

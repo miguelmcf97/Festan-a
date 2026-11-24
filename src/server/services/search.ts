@@ -1,4 +1,5 @@
 import "server-only";
+import { makeT, type Lang } from "@/lib/i18n";
 import { and, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { haversineKm } from "@/lib/geo";
 import { db } from "../db";
@@ -20,6 +21,7 @@ export type SearchParams = {
   query?: string | null;
   verifiedOnly?: boolean;
   limit?: number;
+  lang?: Lang;
 };
 
 export type ProviderCard = {
@@ -61,6 +63,7 @@ export type SearchResult = {
  */
 export async function searchProviders(p: SearchParams): Promise<SearchResult> {
   const limit = Math.min(p.limit ?? 12, 50);
+  const t = makeT(p.lang ?? "pt");
 
   let categoryIds: string[] | null = null;
   if (p.categorySlugs?.length) {
@@ -123,7 +126,7 @@ export async function searchProviders(p: SearchParams): Promise<SearchResult> {
         excluded.outOfArea++;
         continue;
       }
-      reasons.push(coversArea ? `Atende ${target.name}` : `A ${distanceKm.toLocaleString("pt-BR")} km, dentro do raio de atendimento`);
+      reasons.push(coversArea ? t(`Atende ${target.name}`, `Serves ${target.name}`) : t(`A ${distanceKm.toLocaleString("pt-BR")} km, dentro do raio de atendimento`, `${distanceKm.toLocaleString("en-US")} km away, within the service radius`));
     }
 
     if (p.date) {
@@ -131,7 +134,7 @@ export async function searchProviders(p: SearchParams): Promise<SearchResult> {
         excluded.unavailable++;
         continue;
       }
-      reasons.push("Data sem bloqueio na agenda informada pelo fornecedor");
+      reasons.push(t("Data sem bloqueio na agenda informada pelo fornecedor", "Date not blocked in the vendor's calendar"));
     }
 
     if (p.guests) {
@@ -139,28 +142,28 @@ export async function searchProviders(p: SearchParams): Promise<SearchResult> {
         excluded.capacity++;
         continue;
       }
-      if (r.minGuests != null && r.minGuests > p.guests) warnings.push(`Atende a partir de ${r.minGuests} convidados`);
-      else if (r.maxGuests != null) reasons.push(`Capacidade para até ${r.maxGuests} convidados`);
+      if (r.minGuests != null && r.minGuests > p.guests) warnings.push(t(`Atende a partir de ${r.minGuests} convidados`, `Minimum of ${r.minGuests} guests`));
+      else if (r.maxGuests != null) reasons.push(t(`Capacidade para até ${r.maxGuests} convidados`, `Capacity for up to ${r.maxGuests} guests`));
     }
 
     let priceFit = 0.5;
     if (p.budgetMax != null && r.priceMin != null) {
       if (r.priceMin <= p.budgetMax) {
         priceFit = 1;
-        reasons.push("Faixa de preço informada compatível com a verba sugerida");
+        reasons.push(t("Faixa de preço informada compatível com a verba sugerida", "Listed price range fits the suggested budget"));
       } else if (r.priceMin <= p.budgetMax * 1.2) {
         priceFit = 0.4;
-        warnings.push("Preço inicial um pouco acima da verba sugerida");
+        warnings.push(t("Preço inicial um pouco acima da verba sugerida", "Starting price slightly above the suggested budget"));
       } else {
         priceFit = 0;
-        warnings.push("Preço inicial acima da verba sugerida para esta categoria");
+        warnings.push(t("Preço inicial acima da verba sugerida para esta categoria", "Starting price above the suggested budget for this category"));
       }
     } else if (p.budgetMax != null) {
-      warnings.push("Fornecedor não informou faixa de preço — peça orçamento");
+      warnings.push(t("Fornecedor não informou faixa de preço — peça orçamento", "Vendor has not listed a price range — request a quote"));
     }
 
-    if (r.verification === "VERIFIED") reasons.push("Fornecedor verificado pela Planfest");
-    if (r.reviewCount > 0 && r.avgRating != null) reasons.push(`Nota ${r.avgRating.toFixed(1)} em ${r.reviewCount} avaliação(ões) de contratações`);
+    if (r.verification === "VERIFIED") reasons.push(t("Fornecedor verificado pela Planfest", "Vendor verified by Planfest"));
+    if (r.reviewCount > 0 && r.avgRating != null) reasons.push(t(`Nota ${r.avgRating.toFixed(1)} em ${r.reviewCount} avaliação(ões) de contratações`, `Rated ${r.avgRating.toFixed(1)} in ${r.reviewCount} review(s) from bookings`));
 
     // Pontuação: nota com suavização bayesiana, proximidade, verificação, resposta, preço
     const prior = 4.2, weight = 3;

@@ -1,6 +1,6 @@
 # Arquitetura técnica
 
-> Última revisão: 23/11/2026
+> Última revisão: 24/11/2026
 
 ## 1. Decisões e justificativas
 
@@ -11,7 +11,7 @@
 | ORM / migrações | **Drizzle ORM + drizzle-kit** | TypeScript puro, sem binários nativos (Prisma precisa baixar engines — bloqueado no ambiente de build e mais peso na imagem); SQL de migração legível em `drizzle/` | Prisma |
 | Estilo | **Tailwind CSS 4** + componentes próprios (`src/components/ui.tsx`) | Leve, sem dependência de biblioteca de componentes | shadcn/ui (possível no futuro) |
 | Fontes | Bricolage Grotesque + Figtree via `@fontsource` (self-hosted) | Sem chamada a terceiros (CSP e LGPD) | Google Fonts em runtime |
-| IA | **Claude (Anthropic API)** via interface `PlannerEngine`; padrão `claude-sonnet-5-5` | Tool use nativo; troca de modelo/fornecedor sem tocar regra de negócio | Acoplar regra ao SDK |
+| IA | **Claude (Anthropic API)** via interface `PlannerEngine`; padrão `claude-haiku-5-5` desde 24/11/2026 (mais rápido e ~20× mais barato; `AI_MODEL` troca) | Tool use nativo; troca de modelo/fornecedor sem tocar regra de negócio | Acoplar regra ao SDK |
 | Autenticação | Própria: bcrypt (custo 12) + sessão em banco (token aleatório, só o SHA-256 é salvo) + cookie httpOnly/SameSite=Lax/Secure | Controle total, sem serviço externo, revogação imediata | Auth.js (pode ser adotado para login Google na Fase 2) |
 | Deploy | Docker (Next standalone) + Nginx no host + certbot | Barato, previsível, portável | PaaS |
 
@@ -105,6 +105,10 @@ Navegador ──POST /api/ai/chat──► rate limit (usuário/visitante + IP)
 ```
 
 Controles: histórico limitado a 12 mensagens (o estado vai estruturado), `max_tokens` 900, validação zod de todas as entradas de ferramenta, categorias desconhecidas ignoradas e reportadas, erro do provedor → mensagem amigável sem perder o plano. Versão do prompt em `PROMPT_VERSION` (atual: `planner-v1.1.0`); nova versão = novo identificador (não editar o histórico).
+
+**Prompt v1.2 (24/11/2026).** Modelo padrão Haiku 5.5; o prompt recebe o idioma da resposta e quantas mensagens a pessoa ainda tem (limite de 3 por cliente, em `src/server/services/ai-usage.ts`, conferido na rota antes de chamar o modelo). Com poucas mensagens, a IA monta o plano já na primeira resposta assumindo valores razoáveis e, na última, não faz perguntas. O progresso transmitido agora vai como código (`reading`, `tool:<nome>`, `writing`) e a tela traduz.
+
+**Idiomas (pt/en).** Cookie `pf_lang` (padrão português), seletor no canto superior direito (`src/components/lang-switch.tsx`, funciona sem JavaScript). Servidor: `getT()` em `src/server/i18n.ts`; cliente: `useLang()` em `src/components/i18n-client.tsx`; textos como `t("pt", "en")` no próprio componente. Nomes de categorias e rótulos de status têm tradução em `src/lib/i18n.ts` e `src/lib/format.ts`; mensagens de retorno das ações são gravadas em português e traduzidas na tela por `src/lib/messages-en.ts`. Textos do plano (resumo, alertas, dicas) e motivos da busca são gerados no idioma do pedido. Não são traduzidos: o que as pessoas escrevem, nomes de bairros e o corpo dos avisos já gravados (o título é traduzido pelo tipo). Dinheiro continua em reais. O modo demonstração (regras, sem LLM) responde só em português.
 
 **Desempenho (prompt v1.1, 23/11/2026).** Medido no site de teste (Netlify em Ohio + Neon em outra região), primeira mensagem do exemplo do briefing: **25,2 s → 13,9 s** no total, com o primeiro sinal de progresso em ~3 s.
 

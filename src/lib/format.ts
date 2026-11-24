@@ -1,4 +1,5 @@
-// Utilidades de formatação (pt-BR). Dinheiro sempre em centavos.
+// Utilidades de formatação. Dinheiro sempre em centavos e sempre em reais (R$), em qualquer idioma.
+import { LOCALE, type Lang } from "./i18n";
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
@@ -7,21 +8,26 @@ export function formatBRL(cents: number | null | undefined): string {
   return brl.format(Math.round(cents / 100));
 }
 
-export function formatRange(min?: number | null, max?: number | null): string | null {
+export function formatRange(min?: number | null, max?: number | null, lang: Lang = "pt"): string | null {
   if (min == null && max == null) return null;
   if (min != null && max != null && min !== max) return `${formatBRL(min)} – ${formatBRL(max)}`;
-  return `a partir de ${formatBRL(min ?? max)}`;
+  return `${lang === "en" ? "from" : "a partir de"} ${formatBRL(min ?? max)}`;
 }
 
-export function formatDate(d: string | Date | null | undefined): string {
-  if (!d) return "Data a definir";
+export function formatDate(d: string | Date | null | undefined, lang: Lang = "pt"): string {
+  if (!d) return lang === "en" ? "Date to be defined" : "Data a definir";
   const date = typeof d === "string" ? new Date(d.length === 10 ? `${d}T12:00:00` : d) : d;
-  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
+  return date.toLocaleDateString(LOCALE[lang], { day: "2-digit", month: "long", year: "numeric", timeZone: "America/Sao_Paulo" });
 }
 
-export function formatDateTime(d: Date | string): string {
+export function formatShortDate(d: string | Date, lang: Lang = "pt"): string {
+  const date = typeof d === "string" ? new Date(d.length === 10 ? `${d}T12:00:00` : d) : d;
+  return date.toLocaleDateString(LOCALE[lang], { day: "2-digit", month: "short", year: "numeric", timeZone: "America/Sao_Paulo" });
+}
+
+export function formatDateTime(d: Date | string, lang: Lang = "pt"): string {
   const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleString(LOCALE[lang], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 }
 
 export function reaisToCents(input: string | number | null | undefined): number | null {
@@ -85,3 +91,60 @@ export const PRIORITY_LABEL: Record<string, string> = {
   RECOMMENDED: "Recomendado",
   OPTIONAL: "Opcional",
 };
+
+// ───── Rótulos em inglês (mesmas chaves) ─────
+const EN: Record<string, Record<string, string>> = {
+  event: {
+    ANIVERSARIO: "Birthday party",
+    ANIVERSARIO_INFANTIL: "Kids' birthday party",
+    QUINZE_ANOS: "Sweet fifteen party",
+    CASAMENTO: "Wedding",
+    CHA_DE_BEBE: "Baby shower",
+    CHA_REVELACAO: "Gender reveal party",
+    FORMATURA: "Graduation party",
+    CORPORATIVO: "Corporate event",
+    FAMILIAR: "Family gathering",
+    TEMATICA: "Themed party",
+    OUTRO: "Event",
+  },
+  quote: {
+    NEW: "New request",
+    IN_REVIEW: "Under review",
+    AWAITING_INFO: "Waiting for information",
+    QUOTED: "Quote sent",
+    PROPOSAL_ACCEPTED: "Proposal accepted",
+    BOOKED: "Booking confirmed",
+    COMPLETED: "Completed",
+    CANCELLED: "Cancelled",
+    DECLINED: "Declined",
+  },
+  booking: {
+    PENDING_CONFIRMATION: "Reservation — waiting for the provider to confirm",
+    CONFIRMED: "Booking confirmed",
+    COMPLETED: "Completed",
+    CANCELLED: "Cancelled",
+  },
+  priority: { ESSENTIAL: "Essential", RECOMMENDED: "Recommended", OPTIONAL: "Optional" },
+};
+const PT: Record<string, Record<string, string>> = {
+  event: EVENT_TYPE_LABEL,
+  quote: QUOTE_STATUS_LABEL,
+  booking: BOOKING_STATUS_LABEL,
+  priority: PRIORITY_LABEL,
+};
+
+export function eventTypeLabel(k: string | null | undefined, lang: Lang = "pt") {
+  return (lang === "en" ? EN : PT).event[k ?? "OUTRO"] ?? k ?? "";
+}
+export function quoteStatusLabel(k: string, lang: Lang = "pt") {
+  return (lang === "en" ? EN : PT).quote[k] ?? k;
+}
+export function bookingStatusLabel(k: string, lang: Lang = "pt") {
+  return (lang === "en" ? EN : PT).booking[k] ?? k;
+}
+export function priorityLabel(k: string, lang: Lang = "pt") {
+  return (lang === "en" ? EN : PT).priority[k] ?? k;
+}
+export function eventTypeOptions(lang: Lang = "pt") {
+  return Object.keys(EVENT_TYPE_LABEL).map((k) => ({ value: k, label: eventTypeLabel(k, lang) }));
+}

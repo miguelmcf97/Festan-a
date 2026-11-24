@@ -1,7 +1,8 @@
 import "server-only";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { EVENT_TYPE_LABEL } from "@/lib/format";
+import { EVENT_TYPE_LABEL, eventTypeLabel } from "@/lib/format";
+import type { Lang } from "@/lib/i18n";
 import { db } from "../db";
 import { availability, categories, events, locations, providers } from "../db/schema";
 import { getActiveCategories, getActiveLocations } from "../services/catalog-cache";
@@ -10,7 +11,7 @@ import { searchProviders, type ProviderCard } from "../services/search";
 import { matchLocation } from "./extract";
 import { PROMPT_VERSION } from "./prompts";
 
-export type ToolContext = { eventId: string };
+export type ToolContext = { eventId: string; lang?: Lang };
 
 /** O que a interface recebe junto com a resposta da IA. */
 export type UiPayload = {
@@ -155,11 +156,11 @@ export async function eventSnapshot(eventId: string) {
 type EventRow = typeof events.$inferSelect;
 
 /** Aplica dados do evento informados pela IA. Retorna aviso sobre a localização, se houver. */
-async function applyEventUpdate(eventId: string, input: z.infer<typeof updateSchema>): Promise<string | undefined> {
+async function applyEventUpdate(eventId: string, input: z.infer<typeof updateSchema>, lang: Lang = "pt"): Promise<string | undefined> {
   const patch: Partial<typeof events.$inferInsert> = {};
   if (input.tipo) patch.type = input.tipo;
   if (input.titulo) patch.title = input.titulo;
-  else if (input.tipo) patch.title = EVENT_TYPE_LABEL[input.tipo];
+  else if (input.tipo) patch.title = eventTypeLabel(input.tipo, lang);
   if (input.data) patch.date = input.data;
   if (input.data_flexivel != null) patch.dateFlexible = input.data_flexivel;
   if (input.convidados) patch.guests = input.convidados;
@@ -185,7 +186,7 @@ async function applyEventUpdate(eventId: string, input: z.infer<typeof updateSch
 async function runSearch(
   ev: EventRow,
   categorySlug: string,
-  opts: { budgetMax?: number | null; query?: string | null; limit?: number },
+  opts: { budgetMax?: number | null; query?: string | null; limit?: number; lang?: Lang },
   ui: UiPayload,
 ) {
   const cat = (await getActiveCategories()).find((c) => c.slug === categorySlug);
@@ -198,6 +199,7 @@ async function runSearch(
     budgetMax: opts.budgetMax ?? null,
     query: opts.query,
     limit: opts.limit ?? 4,
+    lang: opts.lang,
   });
   ui.recommendations = [
     ...(ui.recommendations ?? []).filter((r) => r.categorySlug !== cat.slug),
@@ -235,13 +237,13 @@ export async function executeTool(
     switch (name) {
       case "atualizar_evento": {
         const input = updateSchema.parse(rawInput);
-        const aviso = await applyEventUpdate(ctx.eventId, input);
+        const aviso = await applyEventUpdate(ctx.eventId, input, ctx.lang);
         return { result: { evento: await eventSnapshot(ctx.eventId), aviso_local: aviso } };
       }
 
       case "montar_planejamento": {
         const input = planSchema.parse(rawInput);
-        const aviso = input.evento ? await applyEventUpdate(ctx.eventId, updateSchema.parse(input.evento)) : undefined;
+        const aviso = input.evento ? await applyEventUpdate(ctx.eventId, updateSchema.parse(input.evento), ctx.lang) : undefined;
         const ev = await db.query.events.findFirst({ where: eq(events.id, ctx.eventId) });
         if (!ev) throw new Error("Evento não encontrado");
         const validSet = new Set((await getActiveCategories()).map((c) => c.slug));
@@ -250,7 +252,8 @@ export async function executeTool(
           items: input.itens.filter((i) => validSet.has(i.categoria_slug)).map((i) => ({ slug: i.categoria_slug, priority: i.prioridade, rationale: i.motivo })),
           guests: ev.guests,
           budget: ev.budgetTotal,
-          eventTypeLabel: EVENT_TYPE_LABEL[ev.type],
+          eventTypeLabel: eventTypeLabel(ev.type, ctx.lang),
+          lang: ctx.lang,
         });
         const saved = await savePlan(ctx.eventId, plan, "AI", PROMPT_VERSION);
         ui.plan = { ...plan, version: saved.version };
@@ -258,7 +261,7 @@ export async function executeTool(
         let fornecedores: unknown;
         if (input.buscar_fornecedores !== false && ev.locationId) {
           const essentials = plan.lines.filter((l) => l.priority === "ESSENTIAL").slice(0, 4);
-          const found = await Promise.all(essentials.map((l) => runSearch(ev, l.slug, { budgetMax: l.allocated, limit: 4 }, ui)));
+          const found = await Promise.all(essentials.map((l) => runSearch(ev, l.slug, { budgetMax: l.allocated, limit: 4, lang: ctx.lang }, ui)));
           fornecedores = found.filter(Boolean);
         }
         return {
@@ -291,7 +294,7 @@ export async function executeTool(
         const res = await runSearch(
           ev,
           input.categoria_slug,
-          { budgetMax: input.budget_max_reais != null ? Math.round(input.budget_max_reais * 100) : null, query: input.termo, limit: input.limite ?? 4 },
+          { budgetMax: input.budget_max_reais != null ? Math.round(input.budget_max_reais * 100) : null, query: input.termo, limit: input.limite ?? 4, lang: ctx.lang },
           ui,
         );
         if (!res) return { result: { erro: `Categoria '${input.categoria_slug}' não existe no catálogo.` }, isError: true };

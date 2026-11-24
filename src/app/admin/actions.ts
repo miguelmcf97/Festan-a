@@ -6,22 +6,28 @@ import { z } from "zod";
 import { reaisToCents, slugify } from "@/lib/format";
 import { audit, requireUser } from "@/server/auth";
 import { db } from "@/server/db";
-import { categories, complaints, providers, reviews, sessions, users } from "@/server/db/schema";
+import { categories, complaints, platformSettings, providers, reviews, sessions, users } from "@/server/db/schema";
+import { AI_LIMIT_KEY } from "@/server/services/ai-usage";
+import { getT } from "@/server/i18n";
 import { invalidateCatalogCache } from "@/server/services/catalog-cache";
 import { notify, refreshProviderMetrics } from "@/server/services/quotes";
 
 const s = z.string().min(1);
 function done(path: string, msg: string): never {
-  revalidatePath(path);
-  redirect(`${path}?ok=${encodeURIComponent(msg)}`);
+  revalidatePath(path.split("?")[0]);
+  redirect(`${path}${path.includes("?") ? "&" : "?"}ok=${encodeURIComponent(msg)}`);
 }
 
 export async function providerDecisionAction(fd: FormData) {
   const admin = await requireUser(["ADMIN"]);
   const id = s.parse(fd.get("providerId"));
   const decision = z.enum(["APPROVE", "REJECT", "SUSPEND", "VERIFY", "UNVERIFY", "REACTIVATE"]).parse(fd.get("decision"));
+  const { t } = await getT();
+  const tab = z.enum(["aprovar", "verificar", "verificados", "outros"]).catch("aprovar").parse(fd.get("aba"));
+  const order = fd.get("ordem") === "recentes" ? "&ordem=recentes" : "";
+  const back = `/admin/fornecedores?aba=${tab}${order}`;
   const prov = await db.query.providers.findFirst({ where: eq(providers.id, id) });
-  if (!prov) done("/admin/fornecedores", "Fornecedor não encontrado");
+  if (!prov) done(back, t("Fornecedor não encontrado", "Vendor not found"));
   const patch: Partial<typeof providers.$inferInsert> = {};
   if (decision === "APPROVE" || decision === "REACTIVATE") patch.status = "APPROVED";
   if (decision === "REJECT") patch.status = "REJECTED";
@@ -37,7 +43,28 @@ export async function providerDecisionAction(fd: FormData) {
     VERIFY: ["Você recebeu o selo de verificado", "Documento e contato conferidos."],
   };
   if (msgs[decision]) await notify(prov!.ownerId, `PROVIDER_${decision}`, msgs[decision][0], msgs[decision][1], "/fornecedor");
-  done("/admin/fornecedores", "Fornecedor atualizado.");
+  const okMsg: Record<string, [string, string]> = {
+    APPROVE: [`${prov!.tradeName} aprovado.`, `${prov!.tradeName} approved.`],
+    REJECT: [`${prov!.tradeName} não aprovado.`, `${prov!.tradeName} rejected.`],
+    SUSPEND: [`${prov!.tradeName} suspenso.`, `${prov!.tradeName} suspended.`],
+    VERIFY: [`${prov!.tradeName} recebeu o selo de verificado.`, `${prov!.tradeName} received the verified badge.`],
+    UNVERIFY: [`Selo de verificado removido de ${prov!.tradeName}.`, `Verified badge removed from ${prov!.tradeName}.`],
+    REACTIVATE: [`${prov!.tradeName} reativado.`, `${prov!.tradeName} reactivated.`],
+  };
+  done(back, t(...okMsg[decision]));
+}
+
+/** Limite de mensagens à IA por cliente (redução de custo). 0 desliga a IA para clientes. */
+export async function aiLimitAction(fd: FormData) {
+  const admin = await requireUser(["ADMIN"]);
+  const { t } = await getT();
+  const limit = z.coerce.number().int().min(0).max(100).parse(fd.get("limit"));
+  await db
+    .insert(platformSettings)
+    .values({ key: AI_LIMIT_KEY, value: { limit } })
+    .onConflictDoUpdate({ target: platformSettings.key, set: { value: { limit }, updatedAt: new Date() } });
+  await audit(admin.id, "settings.ai_limit", "platform_settings", AI_LIMIT_KEY, { limit });
+  done("/admin", t(`Limite atualizado: ${limit} mensagens por cliente.`, `Limit updated: ${limit} messages per customer.`));
 }
 
 export async function reviewModerationAction(fd: FormData) {

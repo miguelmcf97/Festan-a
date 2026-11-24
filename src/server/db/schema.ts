@@ -232,7 +232,8 @@ export const providerCategories = pgTable(
       .notNull()
       .references(() => categories.id, { onDelete: "cascade" }),
   },
-  (t) => [primaryKey({ columns: [t.providerId, t.categoryId] })],
+  // Regra de negócio: cada fornecedor atua em UMA categoria (índice único em provider_id).
+  (t) => [primaryKey({ columns: [t.providerId, t.categoryId] }), uniqueIndex("provider_categories_provider_uq").on(t.providerId)],
 );
 
 export const providerServiceAreas = pgTable(

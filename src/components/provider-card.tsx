@@ -1,12 +1,16 @@
+"use client";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Check, MapPin, TriangleAlert, Users } from "lucide-react";
 import { formatRange } from "@/lib/format";
+import { categoryName } from "@/lib/i18n";
+import { useLang } from "./i18n-client";
 import type { ProviderCard as Card } from "@/server/services/search";
 import { DemoBadge, ProviderCover, Stars, VerifiedBadge } from "./ui";
 
 export function ProviderCard({ p, action, compact = false }: { p: Card; action?: ReactNode; compact?: boolean }) {
-  const price = formatRange(p.priceMin, p.priceMax);
+  const { lang, t } = useLang();
+  const price = formatRange(p.priceMin, p.priceMax, lang);
   return (
     <article className="flex flex-col overflow-hidden rounded-2xl border border-line bg-white">
       <Link href={`/fornecedores/${p.slug}`} className="block" tabIndex={-1} aria-hidden>
@@ -21,14 +25,14 @@ export function ProviderCard({ p, action, compact = false }: { p: Card; action?:
           <Link href={`/fornecedores/${p.slug}`} className="hover:underline">{p.tradeName}</Link>
         </h3>
         {p.shortPitch && !compact && <p className="text-sm text-ink-soft">{p.shortPitch}</p>}
-        <p className="text-xs text-ink-soft">{p.categories.map((c) => c.name).join(", ")}</p>
+        <p className="text-xs text-ink-soft">{p.categories.map((c) => categoryName(c, lang)).join(", ")}</p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-soft">
-          <span className="inline-flex items-center gap-1"><MapPin className="size-4" aria-hidden />{p.location.name}{p.distanceKm != null && ` · ${p.distanceKm.toLocaleString("pt-BR")} km`}</span>
-          {p.maxGuests && <span className="inline-flex items-center gap-1"><Users className="size-4" aria-hidden />até {p.maxGuests}</span>}
+          <span className="inline-flex items-center gap-1"><MapPin className="size-4" aria-hidden />{p.location.name}{p.distanceKm != null && ` · ${p.distanceKm.toLocaleString(lang === "en" ? "en-US" : "pt-BR")} km`}</span>
+          {p.maxGuests && <span className="inline-flex items-center gap-1"><Users className="size-4" aria-hidden />{t("até", "up to")} {p.maxGuests}</span>}
         </div>
         <Stars value={p.avgRating} count={p.reviewCount} />
         <p className="text-sm">
-          {price ? <><strong>{price}</strong>{p.priceNote && <span className="text-ink-soft"> · {p.priceNote}</span>}</> : <span className="text-ink-soft">Preço sob consulta</span>}
+          {price ? <><strong>{price}</strong>{p.priceNote && <span className="text-ink-soft"> · {p.priceNote}</span>}</> : <span className="text-ink-soft">{t("Preço sob consulta", "Price on request")}</span>}
         </p>
         {(p.reasons.length > 0 || p.warnings.length > 0) && (
           <ul className="space-y-1 text-[0.8rem]">

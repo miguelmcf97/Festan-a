@@ -5,7 +5,8 @@ import { executeTool, TOOL_DEFS, type ToolContext, type UiPayload } from "./tool
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 /** Eventos de progresso enviados à tela enquanto a IA trabalha. */
 export type EngineEvents = {
-  onStatus?: (text: string) => void;
+  /** Código da etapa (ex.: "reading", "tool:montar_planejamento", "writing"); a tela traduz. */
+  onStatus?: (code: string) => void;
   onText?: (delta: string) => void;
   onReset?: () => void; // texto transmitido não era a resposta final (veio antes de ferramentas)
 };
@@ -25,19 +26,15 @@ export type EngineResult = {
   timings?: { llmMs: number; toolsMs: number; rounds: number };
 };
 
-const TOOL_STATUS: Record<string, string> = {
-  atualizar_evento: "Anotando os detalhes da festa…",
-  montar_planejamento: "Montando o planejamento e buscando fornecedores…",
-  buscar_fornecedores: "Buscando fornecedores na sua região…",
-  verificar_disponibilidade: "Conferindo as agendas…",
-};
-
 /** Interface independente do fornecedor de LLM. Trocar de modelo/fornecedor = nova implementação. */
 export interface PlannerEngine {
   id: string;
   model: string;
   run(args: EngineRun): Promise<EngineResult>;
 }
+
+/** Modelo padrão: Claude Haiku 5.5 — mais rápido e ~20× mais barato que o Sonnet. Trocar com AI_MODEL. */
+export const DEFAULT_MODEL = "claude-haiku-5-5";
 
 // Preços por milhão de tokens (USD). Atualizar quando a tabela do fornecedor mudar.
 // Fonte: página de preços da API Claude (nov/2026). Ver docs/PLANO_FINANCEIRO.md.
@@ -74,7 +71,7 @@ export class AnthropicEngine implements PlannerEngine {
       toolsMs = 0,
       rounds = 0;
     let finalText = "";
-    events?.onStatus?.("Lendo seu pedido…");
+    events?.onStatus?.("reading");
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       rounds++;
@@ -112,7 +109,7 @@ export class AnthropicEngine implements PlannerEngine {
       // Atualizações do evento primeiro (as demais ferramentas dependem delas); o resto em paralelo.
       const results = new Map<string, Anthropic.ToolResultBlockParam>();
       const run = async (tu: Anthropic.ToolUseBlock) => {
-        events?.onStatus?.(TOOL_STATUS[tu.name] ?? "Consultando o catálogo…");
+        events?.onStatus?.(`tool:${tu.name}`);
         const { result, isError } = await executeTool(tu.name, tu.input, ctx, ui);
         toolCalls.push({ name: tu.name, input: tu.input, result });
         results.set(tu.id, { type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result), is_error: isError });
@@ -121,11 +118,11 @@ export class AnthropicEngine implements PlannerEngine {
       await Promise.all(toolUses.filter((t) => t.name !== "atualizar_evento").map(run));
       toolsMs += Date.now() - t1;
       messages.push({ role: "user", content: toolUses.map((tu) => results.get(tu.id)!) });
-      events?.onStatus?.("Escrevendo a resposta…");
+      events?.onStatus?.("writing");
     }
 
     return {
-      text: finalText || "Atualizei seu planejamento. Dá uma olhada nos detalhes abaixo.",
+      text: finalText || (ctx.lang === "en" ? "I updated your plan. Take a look at the details below." : "Atualizei seu planejamento. Dá uma olhada nos detalhes abaixo."),
       inputTokens,
       outputTokens,
       toolCalls,
@@ -137,7 +134,7 @@ export class AnthropicEngine implements PlannerEngine {
 export async function getEngine(): Promise<PlannerEngine> {
   const provider = process.env.AI_PROVIDER ?? (process.env.ANTHROPIC_API_KEY ? "anthropic" : "demo-rules");
   if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY) {
-    return new AnthropicEngine(process.env.AI_MODEL ?? "claude-sonnet-5-5", process.env.ANTHROPIC_API_KEY);
+    return new AnthropicEngine(process.env.AI_MODEL || DEFAULT_MODEL, process.env.ANTHROPIC_API_KEY);
   }
   const { RulesEngine } = await import("./rules-engine");
   return new RulesEngine();

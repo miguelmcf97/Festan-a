@@ -9,6 +9,8 @@ import { audit, clientIp, createSession, getCurrentUser, hashPassword } from "@/
 import { db } from "@/server/db";
 import { providerCategories, providers, users } from "@/server/db/schema";
 import { notify } from "@/server/services/quotes";
+import { getActiveCategories } from "@/server/services/catalog-cache";
+import { getT } from "@/server/i18n";
 import { LIMITS, rateLimit } from "@/server/security/rate-limit";
 
 const schema = z
@@ -30,30 +32,45 @@ const schema = z
   })
   .refine((d) => (d.docType === "CPF" ? isValidCPF(d.document) : isValidCNPJ(d.document)), { path: ["document"], message: "Documento inválido" });
 
+const EN_ERRORS: Record<string, string> = {
+  "Informe o nome do responsável": "Enter the contact person's name",
+  "E-mail inválido": "Invalid email",
+  "Senha com pelo menos 8 caracteres": "Password must have at least 8 characters",
+  "Telefone com DDD": "Phone number with area code",
+  "Informe o nome da empresa": "Enter the business name",
+  "Escolha o bairro base": "Choose your base neighborhood",
+  "Conte um pouco mais sobre seu trabalho (mín. 30 caracteres)": "Tell us a bit more about your work (min. 30 characters)",
+  "É preciso aceitar os termos": "You need to accept the terms",
+  "Documento inválido": "Invalid document number",
+};
+
 export async function providerSignupAction(_: FormState, fd: FormData): Promise<FormState> {
   const current = await getCurrentUser();
-  const raw = Object.fromEntries([...fd.entries()].filter(([k, v]) => v !== "" && k !== "categories"));
+  const { t } = await getT();
+  const raw = Object.fromEntries([...fd.entries()].filter(([k, v]) => v !== "" && k !== "categoryId"));
   const parsed = schema.safeParse(raw);
-  const cats = fd.getAll("categories").map(String).filter(Boolean);
+  // Regra: um fornecedor atua em uma única categoria
+  const picked = fd.getAll("categoryId").map(String).filter(Boolean);
+  const category = picked.length === 1 ? (await getActiveCategories()).find((c) => c.id === picked[0]) : undefined;
   const fieldErrors: Record<string, string> = {};
-  if (!parsed.success) for (const i of parsed.error.issues) fieldErrors[String(i.path[0])] ??= i.message;
-  if (!cats.length) fieldErrors.categories = "Escolha pelo menos uma categoria";
-  if (!current && !raw.password) fieldErrors.password ??= "Crie uma senha";
-  if (Object.keys(fieldErrors).length || !parsed.success) return { fieldErrors };
+  if (!parsed.success) for (const i of parsed.error.issues) fieldErrors[String(i.path[0])] ??= t(i.message, EN_ERRORS[i.message] ?? "Check this field");
+  if (!category) fieldErrors.categories = t("Escolha a categoria do seu serviço", "Choose your service category");
+  if (!current && !raw.password) fieldErrors.password ??= t("Crie uma senha", "Create a password");
+  if (Object.keys(fieldErrors).length || !parsed.success || !category) return { fieldErrors };
   const d = parsed.data;
 
   const rl = rateLimit(`provsignup:${await clientIp()}`, LIMITS.signup.limit, LIMITS.signup.windowMs);
-  if (!rl.ok) return { error: "Muitos cadastros a partir desta conexão. Tente mais tarde." };
+  if (!rl.ok) return { error: t("Muitos cadastros a partir desta conexão. Tente mais tarde.", "Too many sign-ups from this connection. Try again later.") };
 
   let ownerId: string;
   if (current) {
-    if (current.role !== "PROVIDER") return { error: "Sua conta atual é de cliente. Saia e cadastre a empresa com outro e-mail." };
+    if (current.role !== "PROVIDER") return { error: t("Sua conta atual é de cliente. Saia e cadastre a empresa com outro e-mail.", "You are signed in with a customer account. Sign out and register the business with another email.") };
     const has = await db.query.providers.findFirst({ where: eq(providers.ownerId, current.id), columns: { id: true } });
     if (has) redirect("/fornecedor");
     ownerId = current.id;
   } else {
     const exists = await db.query.users.findFirst({ where: eq(users.email, d.email), columns: { id: true } });
-    if (exists) return { fieldErrors: { email: "Já existe uma conta com este e-mail. Entre primeiro." } };
+    if (exists) return { fieldErrors: { email: t("Já existe uma conta com este e-mail. Entre primeiro.", "An account with this email already exists. Sign in first.") } };
     const [u] = await db.insert(users).values({ name: d.responsibleName, email: d.email, phone: d.phone, passwordHash: await hashPassword(d.password!), role: "PROVIDER", lgpdConsentAt: new Date() }).returning();
     ownerId = u.id;
   }
@@ -70,7 +87,7 @@ export async function providerSignupAction(_: FormState, fd: FormData): Promise<
       status: "PENDING_REVIEW",
     })
     .returning();
-  await db.insert(providerCategories).values(cats.map((categoryId) => ({ providerId: prov.id, categoryId })));
+  await db.insert(providerCategories).values({ providerId: prov.id, categoryId: category.id });
   await audit(ownerId, "provider.signup", "provider", prov.id);
   const admins = await db.query.users.findMany({ where: eq(users.role, "ADMIN"), columns: { id: true } });
   for (const a of admins) await notify(a.id, "PROVIDER_PENDING", "Novo fornecedor aguardando aprovação", d.tradeName, "/admin/fornecedores");

@@ -19,9 +19,8 @@ export class RulesEngine implements PlannerEngine {
 
   async run({ userMessage, ctx, ui, events: progress }: EngineRun): Promise<EngineResult> {
     const toolCalls: EngineResult["toolCalls"] = [];
-    const STATUS: Record<string, string> = { atualizar_evento: "Anotando os detalhes da festa…", montar_planejamento: "Montando o planejamento…", buscar_fornecedores: "Buscando fornecedores na sua região…" };
     const call = async (name: string, input: unknown) => {
-      progress?.onStatus?.(STATUS[name] ?? "Consultando o catálogo…");
+      progress?.onStatus?.(`tool:${name}`);
       const r = await executeTool(name, input, ctx, ui);
       toolCalls.push({ name, input, result: r.result });
       return r.result as Record<string, unknown>;

@@ -1,7 +1,8 @@
 "use server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { EVENT_TYPE_LABEL, formatBRL, formatDate } from "@/lib/format";
+import { eventTypeLabel, formatBRL, formatDate } from "@/lib/format";
+import { getT } from "@/server/i18n";
 import { audit, getCurrentUser } from "@/server/auth";
 import { db } from "@/server/db";
 import { events, locations } from "@/server/db/schema";
@@ -18,12 +19,13 @@ export type QuoteActionResult = { ok: true; created: number; skipped: number } |
 
 export async function requestQuotesAction(input: z.infer<typeof schema>): Promise<QuoteActionResult> {
   const user = await getCurrentUser();
-  if (!user) return { ok: false, error: "Entre ou crie sua conta para enviar solicitações.", needsLogin: true };
-  if (user.role !== "CONSUMER") return { ok: false, error: "Somente contas de cliente podem pedir orçamentos." };
+  const { t } = await getT();
+  if (!user) return { ok: false, error: t("Entre ou crie sua conta para enviar solicitações.", "Sign in or create an account to send requests."), needsLogin: true };
+  if (user.role !== "CONSUMER") return { ok: false, error: t("Somente contas de cliente podem pedir orçamentos.", "Only customer accounts can request quotes.") };
   const parsed = schema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
+  if (!parsed.success) return { ok: false, error: t(parsed.error.issues[0]?.message ?? "Dados inválidos", "Describe briefly what you need (at least 10 characters).") };
   const rl = rateLimit(`quote:${user.id}`, LIMITS.quoteRequest.limit, LIMITS.quoteRequest.windowMs);
-  if (!rl.ok) return { ok: false, error: "Limite diário de solicitações atingido. Tente amanhã." };
+  if (!rl.ok) return { ok: false, error: t("Limite diário de solicitações atingido. Tente amanhã.", "Daily request limit reached. Try again tomorrow.") };
 
   const cats = await db.query.categories.findMany();
   const bySlug = new Map(cats.map((c) => [c.slug, c.id]));
@@ -48,6 +50,7 @@ export async function requestQuotesAction(input: z.infer<typeof schema>): Promis
 /** Texto inicial da solicitação, montado a partir dos dados do evento. */
 export async function eventBriefAction(eventId: string): Promise<string> {
   const user = await getCurrentUser();
+  const { lang, t } = await getT();
   const ev = await db.query.events.findFirst({ where: eq(events.id, eventId) });
   if (!ev || (ev.ownerId && ev.ownerId !== user?.id)) return "";
   const loc = ev.locationId ? await db.query.locations.findFirst({ where: eq(locations.id, ev.locationId) }) : null;
@@ -55,9 +58,9 @@ export async function eventBriefAction(eventId: string): Promise<string> {
     .filter(([k]) => !k.startsWith("servicos_"))
     .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
   return [
-    `${EVENT_TYPE_LABEL[ev.type]}${ev.guests ? ` para ${ev.guests} pessoas` : ""}${loc ? ` em ${loc.name} (${loc.city})` : ""}.`,
-    `Data: ${ev.date ? formatDate(ev.date) : "a definir"}.`,
-    ev.budgetTotal ? `Orçamento total da festa: ${formatBRL(ev.budgetTotal)}.` : "",
-    prefs.length ? `Preferências: ${prefs.join("; ")}.` : "",
+    `${eventTypeLabel(ev.type, lang)}${ev.guests ? t(` para ${ev.guests} pessoas`, ` for ${ev.guests} people`) : ""}${loc ? t(` em ${loc.name} (${loc.city})`, ` in ${loc.name} (${loc.city})`) : ""}.`,
+    `${t("Data", "Date")}: ${ev.date ? formatDate(ev.date, lang) : t("a definir", "to be defined")}.`,
+    ev.budgetTotal ? `${t("Orçamento total da festa", "Total party budget")}: ${formatBRL(ev.budgetTotal)}.` : "",
+    prefs.length ? `${t("Preferências", "Preferences")}: ${prefs.join("; ")}.` : "",
   ].filter(Boolean).join(" ");
 }

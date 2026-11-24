@@ -7,11 +7,11 @@ from dataclasses import dataclass
 
 USD_BRL = 5.87  # [fonte] dólar comercial no fechamento de 18/11/2026 (Brasil 61); atualizar
 # Custo de IA = chamadas por conversa × tokens × preço. Preços do Claude Sonnet 5.5: US$ 2 (entrada) / US$ 10 (saída) por milhão de tokens [fonte: tabela da API]
-AI_CALLS_PER_CONVERSATION = 8       # ~4 mensagens da pessoa × 2 rodadas do modelo (prompt v1.1)
+AI_CALLS_PER_CONVERSATION = 6       # limite de 3 mensagens por cliente × 2 rodadas do modelo (prompt v1.2)
 AI_INPUT_TOKENS_PER_CALL = 6000     # instruções + catálogo + estado do evento + resultados das ferramentas
 AI_OUTPUT_TOKENS_PER_CALL = 600
-AI_PRICE_USD_PER_MTOK = (2.0, 10.0)
-AI_COST_PER_CONVERSATION_USD = AI_CALLS_PER_CONVERSATION * (AI_INPUT_TOKENS_PER_CALL * AI_PRICE_USD_PER_MTOK[0] + AI_OUTPUT_TOKENS_PER_CALL * AI_PRICE_USD_PER_MTOK[1]) / 1e6  # ≈ US$ 0,144
+AI_PRICE_USD_PER_MTOK = (0.1, 0.5)  # Claude Haiku 5.5 (padrão desde 24/11/2026); Sonnet 5.5 = (2.0, 10.0)
+AI_COST_PER_CONVERSATION_USD = AI_CALLS_PER_CONVERSATION * (AI_INPUT_TOKENS_PER_CALL * AI_PRICE_USD_PER_MTOK[0] + AI_OUTPUT_TOKENS_PER_CALL * AI_PRICE_USD_PER_MTOK[1]) / 1e6  # ≈ US$ 0,0054 (Sonnet seria ≈ US$ 0,108)
 
 
 @dataclass

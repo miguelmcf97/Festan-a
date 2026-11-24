@@ -6,7 +6,7 @@ const sse = (res, ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(d
 http.createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
   const b = JSON.parse(body || "{}");
-  log.push({ path: req.url, stream: b.stream, systemBlocks: (b.system || []).map((s) => ({ cache: !!s.cache_control, len: s.text.length, head: s.text.slice(0, 30) })), nMsgs: b.messages?.length, max_tokens: b.max_tokens });
+  log.push({ path: req.url, model: b.model, dynamic: (b.system || [])[1]?.text?.split("## Estado")[0], stream: b.stream, systemBlocks: (b.system || []).map((s) => ({ cache: !!s.cache_control, len: s.text.length, head: s.text.slice(0, 30) })), nMsgs: b.messages?.length, max_tokens: b.max_tokens });
   fs.writeFileSync("/tmp/mock-log.json", JSON.stringify(log, null, 1));
   const last = b.messages[b.messages.length - 1];
   const hasToolResult = Array.isArray(last.content) && last.content.some((c) => c.type === "tool_result");

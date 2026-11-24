@@ -1,5 +1,5 @@
 "use server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -7,6 +7,9 @@ import { reaisToCents } from "@/lib/format";
 import { audit, requireUser } from "@/server/auth";
 import { db } from "@/server/db";
 import { availability, providerCategories, providers, services } from "@/server/db/schema";
+import { getActiveCategories } from "@/server/services/catalog-cache";
+import { addDays, todayRio } from "@/server/services/agenda";
+import { getT } from "@/server/i18n";
 import { myProvider } from "@/server/services/providers";
 import {
   BusinessRuleError,
@@ -19,7 +22,7 @@ import {
   sendProposal,
 } from "@/server/services/quotes";
 
-async function run(back: string, fn: () => Promise<void>, okMsg: string) {
+async function run(back: string, fn: () => Promise<void>, okMsg: string, okFn?: () => string | undefined) {
   try {
     await fn();
   } catch (e) {
@@ -28,7 +31,7 @@ async function run(back: string, fn: () => Promise<void>, okMsg: string) {
     throw e;
   }
   revalidatePath(back);
-  redirect(`${back}?ok=${encodeURIComponent(okMsg)}`);
+  redirect(`${back}?ok=${encodeURIComponent(okFn?.() ?? okMsg)}`);
 }
 
 const qid = (fd: FormData) => z.string().min(1).parse(fd.get("quoteId"));
@@ -124,39 +127,51 @@ export async function updateProfileAction(fd: FormData) {
   const u = await requireUser(["PROVIDER"]);
   const prov = await myProvider(u.id);
   if (!prov) redirect("/seja-fornecedor");
+  const { t } = await getT();
+  let okOverride: string | undefined;
   await run("/fornecedor/perfil", async () => {
     const d = profileSchema.parse(Object.fromEntries([...fd.entries()].filter(([, v]) => v !== "")));
-    const cats = fd.getAll("categories").map(String).filter(Boolean);
-    if (!cats.length) throw new BusinessRuleError("Escolha pelo menos uma categoria");
+    // Regra: um fornecedor atua em uma única categoria
+    const picked = fd.getAll("categoryId").map(String).filter(Boolean);
+    const category = picked.length === 1 ? (await getActiveCategories()).find((c) => c.id === picked[0]) : undefined;
+    if (!category) throw new BusinessRuleError(t("Escolha a categoria do seu serviço", "Choose your service category"));
+    const changed = prov.categories[0]?.categoryId !== category.id;
     await db.transaction(async (tx) => {
       await tx.update(providers).set({
         tradeName: d.tradeName, shortPitch: d.shortPitch ?? null, description: d.description, phone: d.phone, whatsapp: d.whatsapp ?? null,
         email: d.email, locationId: d.locationId, serviceRadiusKm: d.serviceRadiusKm, minGuests: d.minGuests || null, maxGuests: d.maxGuests || null,
         priceMin: reaisToCents(d.priceMin), priceMax: reaisToCents(d.priceMax), priceNote: d.priceNote ?? null,
       }).where(eq(providers.id, prov.id));
-      await tx.delete(providerCategories).where(eq(providerCategories.providerId, prov.id));
-      await tx.insert(providerCategories).values(cats.map((categoryId) => ({ providerId: prov.id, categoryId })));
+      if (changed) {
+        await tx.delete(providerCategories).where(eq(providerCategories.providerId, prov.id));
+        await tx.insert(providerCategories).values({ providerId: prov.id, categoryId: category.id });
+        // serviços cadastrados na categoria anterior saem do ar (não são apagados)
+        await tx.update(services).set({ active: false }).where(and(eq(services.providerId, prov.id), ne(services.categoryId, category.id)));
+      }
     });
-    await audit(u.id, "provider.update", "provider", prov.id);
-  }, "Perfil atualizado.");
+    await audit(u.id, "provider.update", "provider", prov.id, changed ? { category: category.slug } : undefined);
+    if (changed) okOverride = t("Perfil atualizado. Serviços da categoria anterior foram desativados.", "Profile updated. Services from the previous category were deactivated.");
+  }, t("Perfil atualizado.", "Profile updated."), () => okOverride);
 }
 
 export async function addServiceAction(fd: FormData) {
   const u = await requireUser(["PROVIDER"]);
   const prov = await myProvider(u.id);
   if (!prov) redirect("/seja-fornecedor");
+  const { t } = await getT();
   await run("/fornecedor/perfil", async () => {
     const d = z.object({
       name: z.string().trim().min(3, "Dê um nome ao serviço").max(100),
-      categoryId: z.string().min(1),
       description: z.string().trim().max(600).optional(),
       priceType: z.enum(["FIXED", "FROM", "PER_PERSON", "ON_REQUEST"]),
       priceMin: z.string().optional(),
       priceMax: z.string().optional(),
       kind: z.enum(["SERVICE", "PRODUCT"]).default("SERVICE"),
     }).parse(Object.fromEntries([...fd.entries()].filter(([, v]) => v !== "")));
-    if (!prov.categories.some((c) => c.categoryId === d.categoryId)) throw new BusinessRuleError("Categoria não pertence ao seu perfil");
-    await db.insert(services).values({ providerId: prov.id, categoryId: d.categoryId, name: d.name, description: d.description ?? null, priceType: d.priceType, priceMin: reaisToCents(d.priceMin), priceMax: reaisToCents(d.priceMax), kind: d.kind });
+    // o serviço herda a categoria única do fornecedor
+    const categoryId = prov.categories[0]?.categoryId;
+    if (!categoryId) throw new BusinessRuleError(t("Escolha a categoria do seu serviço no perfil antes de cadastrar serviços.", "Choose your service category in the profile before adding services."));
+    await db.insert(services).values({ providerId: prov.id, categoryId, name: d.name, description: d.description ?? null, priceType: d.priceType, priceMin: reaisToCents(d.priceMin), priceMax: reaisToCents(d.priceMax), kind: d.kind });
   }, "Serviço adicionado.");
 }
 
@@ -169,22 +184,69 @@ export async function removeServiceAction(fd: FormData) {
   }, "Serviço removido.");
 }
 
-export async function blockDateAction(fd: FormData) {
+// ───────────── Agenda ─────────────
+
+const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+const agendaBack = (fd: FormData) => {
+  const b = String(fd.get("back") ?? "");
+  return /^\/fornecedor\/agenda(\?mes=\d{4}-\d{2})?$/.test(b) ? b : "/fornecedor/agenda";
+};
+
+/** Um toque no dia: livre → bloqueada; bloqueada → livre. Datas fechadas (contratação) não mudam por aqui. */
+export async function toggleDateAction(fd: FormData) {
   const u = await requireUser(["PROVIDER"]);
   const prov = await myProvider(u.id);
   if (!prov) redirect("/seja-fornecedor");
-  await run("/fornecedor/perfil", async () => {
-    const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida").parse(fd.get("date"));
-    await db.insert(availability).values({ providerId: prov.id, date, status: "BLOCKED", note: String(fd.get("note") ?? "").slice(0, 120) || null }).onConflictDoNothing();
-  }, "Data bloqueada na agenda.");
+  const back = agendaBack(fd);
+  let ok = "Data bloqueada na agenda.";
+  await runAt(back, async () => {
+    const date = z.string().regex(dateRe, "Data inválida").parse(fd.get("date"));
+    if (date < todayRio()) throw new BusinessRuleError("Data inválida");
+    const cur = await db.query.availability.findFirst({ where: and(eq(availability.providerId, prov.id), eq(availability.date, date)) });
+    if (cur?.status === "BOOKED") throw new BusinessRuleError("Esta data tem contratação confirmada e não pode ser liberada pela agenda.");
+    if (cur?.status === "BLOCKED") {
+      await db.delete(availability).where(eq(availability.id, cur.id));
+      ok = "Data liberada.";
+    } else {
+      await db.insert(availability).values({ providerId: prov.id, date, status: "BLOCKED" }).onConflictDoNothing();
+    }
+  }, () => ok);
 }
 
-export async function unblockDateAction(fd: FormData) {
+export async function blockRangeAction(fd: FormData) {
   const u = await requireUser(["PROVIDER"]);
   const prov = await myProvider(u.id);
   if (!prov) redirect("/seja-fornecedor");
-  await run("/fornecedor/perfil", async () => {
-    // datas BOOKED (contratação confirmada) não podem ser liberadas manualmente
-    await db.delete(availability).where(and(eq(availability.id, z.string().parse(fd.get("id"))), eq(availability.providerId, prov.id), eq(availability.status, "BLOCKED")));
-  }, "Data liberada.");
+  const back = agendaBack(fd);
+  let n = 0;
+  await runAt(back, async () => {
+    const from = z.string().regex(dateRe, "Data inválida").parse(fd.get("from"));
+    const to = z.string().regex(dateRe, "Data inválida").parse(fd.get("to"));
+    const today = todayRio();
+    if (from < today || to < from) throw new BusinessRuleError("Período inválido: a data final precisa ser igual ou depois da inicial, a partir de hoje.");
+    const dates: string[] = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
+    if (dates.length > 92) throw new BusinessRuleError("Bloqueie no máximo 92 dias de uma vez.");
+    const note = String(fd.get("note") ?? "").trim().slice(0, 120) || null;
+    const res = await db
+      .insert(availability)
+      .values(dates.map((date) => ({ providerId: prov.id, date, status: "BLOCKED" as const, note })))
+      .onConflictDoNothing()
+      .returning({ id: availability.id });
+    n = res.length;
+  }, () => `${n} ${n === 1 ? "data bloqueada" : "datas bloqueadas"}.`);
+}
+
+async function runAt(back: string, fn: () => Promise<void>, okFn: () => string) {
+  try {
+    await fn();
+  } catch (e) {
+    const sep = back.includes("?") ? "&" : "?";
+    if (e instanceof BusinessRuleError) redirect(`${back}${sep}erro=${encodeURIComponent(e.message)}`);
+    if (e instanceof z.ZodError) redirect(`${back}${sep}erro=${encodeURIComponent(e.issues[0].message)}`);
+    throw e;
+  }
+  revalidatePath("/fornecedor/agenda");
+  revalidatePath("/fornecedor");
+  redirect(`${back}${back.includes("?") ? "&" : "?"}ok=${encodeURIComponent(okFn())}`);
 }

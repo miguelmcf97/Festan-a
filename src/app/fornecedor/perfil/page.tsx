@@ -1,121 +1,148 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { CalendarDays } from "lucide-react";
 import { Flash } from "@/components/status";
-import { Button, Field, Input, Panel, Select, Textarea } from "@/components/ui";
-import { formatDate, formatRange } from "@/lib/format";
+import { Alert, Button, Field, Input, LinkButton, Panel, Select, Textarea } from "@/components/ui";
+import { formatRange } from "@/lib/format";
+import { categoryName, groupName } from "@/lib/i18n";
 import { requireUser } from "@/server/auth";
 import { db } from "@/server/db";
-import { availability, services } from "@/server/db/schema";
+import { services } from "@/server/db/schema";
+import { getT } from "@/server/i18n";
 import { myProvider } from "@/server/services/providers";
 import { listActiveCategories, listLocations } from "@/server/services/search";
-import { addServiceAction, blockDateAction, removeServiceAction, unblockDateAction, updateProfileAction } from "../actions";
+import { addServiceAction, removeServiceAction, updateProfileAction } from "../actions";
 
-export const metadata: Metadata = { title: "Perfil, serviços e agenda" };
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getT();
+  return { title: t("Perfil e serviços", "Profile and services") };
+}
 
 export default async function ProviderProfile({ searchParams }: { searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const user = await requireUser(["PROVIDER"], "/fornecedor/perfil");
   const p = await myProvider(user.id);
   if (!p) return null;
-  const [cats, locs, svcs, dates] = await Promise.all([
+  const { lang, t } = await getT();
+  const [cats, locs, svcs] = await Promise.all([
     listActiveCategories(),
     listLocations(),
     db.query.services.findMany({ where: and(eq(services.providerId, p.id), eq(services.active, true)), with: { category: true } }),
-    db.query.availability.findMany({ where: and(eq(availability.providerId, p.id), gte(availability.date, new Date().toISOString().slice(0, 10))), orderBy: asc(availability.date) }),
   ]);
   const sp = await searchParams;
-  const mine = new Set(p.categories.map((c) => c.categoryId));
+  const current = p.categories[0]?.category ?? null;
+  const groups = [...new Set(cats.map((c) => c.group))];
   const reais = (c: number | null) => (c != null ? String(c / 100) : "");
 
   return (
     <div className="mx-auto max-w-4xl px-4 pt-8">
-      <Link href="/fornecedor" className="text-sm font-semibold text-ink-soft hover:text-ink">← Painel</Link>
-      <h1 className="mt-2 text-3xl font-bold">Perfil, serviços e agenda</h1>
-      <p className="mb-6 text-ink-soft">Quanto mais completo e atualizado, mais vezes você aparece nas recomendações da IA.</p>
+      <Link href="/fornecedor" className="text-sm font-semibold text-ink-soft hover:text-ink">← {t("Painel", "Dashboard")}</Link>
+      <h1 className="mt-2 text-3xl font-bold">{t("Perfil e serviços", "Profile and services")}</h1>
+      <p className="mb-6 text-ink-soft">{t("Quanto mais completo e atualizado, mais vezes você aparece nas recomendações da IA.", "The more complete and up to date, the more often the AI recommends you.")}</p>
       <Flash {...sp} />
 
+      <Link href="/fornecedor/agenda" className="mb-6 flex items-center gap-4 rounded-2xl border border-line p-4 hover:border-ink">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-pitanga-soft text-pitanga"><CalendarDays className="size-5" aria-hidden /></span>
+        <span className="flex-1">
+          <span className="block font-bold">{t("Agenda", "Calendar")}</span>
+          <span className="block text-sm text-ink-soft">{t("Veja datas livres, bloqueadas e fechadas e bloqueie dias com um toque.", "See open, blocked and booked dates and block days with one tap.")}</span>
+        </span>
+      </Link>
+
       <Panel>
-        <h2 className="text-xl font-bold">Dados da empresa</h2>
+        <h2 className="text-xl font-bold">{t("Dados da empresa", "Business details")}</h2>
         <form action={updateProfileAction} className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Field label="Nome fantasia" htmlFor="tn"><Input id="tn" name="tradeName" defaultValue={p.tradeName} required /></Field>
-          <Field label="Frase curta" htmlFor="sp"><Input id="sp" name="shortPitch" defaultValue={p.shortPitch ?? ""} maxLength={120} /></Field>
-          <div className="sm:col-span-2"><Field label="Descrição" htmlFor="ds"><Textarea id="ds" name="description" defaultValue={p.description} required rows={5} /></Field></div>
-          <Field label="Telefone" htmlFor="ph"><Input id="ph" name="phone" defaultValue={p.phone} required /></Field>
+          <Field label={t("Nome fantasia", "Business name")} htmlFor="tn"><Input id="tn" name="tradeName" defaultValue={p.tradeName} required /></Field>
+          <Field label={t("Frase curta", "Short tagline")} htmlFor="sp"><Input id="sp" name="shortPitch" defaultValue={p.shortPitch ?? ""} maxLength={120} /></Field>
+          <div className="sm:col-span-2"><Field label={t("Descrição", "Description")} htmlFor="ds"><Textarea id="ds" name="description" defaultValue={p.description} required rows={5} /></Field></div>
+          <Field label={t("Telefone", "Phone")} htmlFor="ph"><Input id="ph" name="phone" defaultValue={p.phone} required /></Field>
           <Field label="WhatsApp" htmlFor="wa"><Input id="wa" name="whatsapp" defaultValue={p.whatsapp ?? ""} /></Field>
-          <Field label="E-mail comercial" htmlFor="em"><Input id="em" name="email" type="email" defaultValue={p.email} required /></Field>
-          <Field label="Bairro base" htmlFor="lc">
+          <Field label={t("E-mail comercial", "Business email")} htmlFor="em"><Input id="em" name="email" type="email" defaultValue={p.email} required /></Field>
+          <Field label={t("Bairro base", "Base neighborhood")} htmlFor="lc">
             <Select id="lc" name="locationId" defaultValue={p.locationId}>
               {locs.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.city})</option>)}
             </Select>
           </Field>
-          <Field label="Raio de atendimento (km)" htmlFor="rk"><Input id="rk" name="serviceRadiusKm" type="number" min={1} max={150} defaultValue={p.serviceRadiusKm} /></Field>
+          <Field label={t("Raio de atendimento (km)", "Service radius (km)")} htmlFor="rk"><Input id="rk" name="serviceRadiusKm" type="number" min={1} max={150} defaultValue={p.serviceRadiusKm} /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Mín. convidados" htmlFor="mg"><Input id="mg" name="minGuests" type="number" min={0} defaultValue={p.minGuests ?? ""} /></Field>
-            <Field label="Máx. convidados" htmlFor="xg"><Input id="xg" name="maxGuests" type="number" min={0} defaultValue={p.maxGuests ?? ""} /></Field>
+            <Field label={t("Mín. convidados", "Min. guests")} htmlFor="mg"><Input id="mg" name="minGuests" type="number" min={0} defaultValue={p.minGuests ?? ""} /></Field>
+            <Field label={t("Máx. convidados", "Max. guests")} htmlFor="xg"><Input id="xg" name="maxGuests" type="number" min={0} defaultValue={p.maxGuests ?? ""} /></Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Preço a partir de (R$)" htmlFor="pm"><Input id="pm" name="priceMin" inputMode="decimal" defaultValue={reais(p.priceMin)} /></Field>
-            <Field label="Até (R$)" htmlFor="px"><Input id="px" name="priceMax" inputMode="decimal" defaultValue={reais(p.priceMax)} /></Field>
+            <Field label={t("Preço a partir de (R$)", "Price from (R$)")} htmlFor="pm"><Input id="pm" name="priceMin" inputMode="decimal" defaultValue={reais(p.priceMin)} /></Field>
+            <Field label={t("Até (R$)", "Up to (R$)")} htmlFor="px"><Input id="px" name="priceMax" inputMode="decimal" defaultValue={reais(p.priceMax)} /></Field>
           </div>
-          <Field label="Observação de preço" htmlFor="pn" hint="Ex.: pacote 4h, por pessoa…"><Input id="pn" name="priceNote" defaultValue={p.priceNote ?? ""} /></Field>
+          <Field label={t("Observação de preço", "Price note")} htmlFor="pn" hint={t("Ex.: pacote 4h, por pessoa…", "E.g. 4-hour package, per person…")}><Input id="pn" name="priceNote" defaultValue={p.priceNote ?? ""} /></Field>
           <fieldset className="sm:col-span-2">
-            <legend className="text-sm font-semibold">Categorias</legend>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
-              {cats.map((c) => (
-                <label key={c.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="categories" value={c.id} defaultChecked={mine.has(c.id)} className="accent-pitanga" />{c.name}</label>
+            <legend className="text-sm font-semibold">{t("Categoria do seu serviço", "Your service category")}</legend>
+            <p className="text-xs text-ink-soft">
+              {t(
+                "Cada fornecedor atua em uma categoria. Se você trocar, os serviços da categoria anterior saem do ar.",
+                "Each vendor works in one category. If you change it, services from the previous category are taken down.",
+              )}
+            </p>
+            <div className="mt-2 grid gap-4 sm:grid-cols-2">
+              {groups.map((g) => (
+                <div key={g}>
+                  <p className="text-xs font-semibold text-ink-soft">{groupName(g, lang)}</p>
+                  {cats.filter((c) => c.group === g).map((c) => (
+                    <label key={c.id} className="mt-1 flex items-center gap-2 text-sm">
+                      <input type="radio" name="categoryId" value={c.id} defaultChecked={current?.id === c.id} required className="accent-pitanga" />
+                      {categoryName(c, lang)}
+                    </label>
+                  ))}
+                </div>
               ))}
             </div>
           </fieldset>
-          <div className="sm:col-span-2"><Button>Salvar perfil</Button></div>
+          <div className="sm:col-span-2"><Button>{t("Salvar perfil", "Save profile")}</Button></div>
         </form>
       </Panel>
 
       <Panel className="mt-6">
-        <h2 className="text-xl font-bold">Serviços e produtos</h2>
+        <h2 className="text-xl font-bold">{t("Serviços e produtos", "Services and products")}</h2>
+        {current ? (
+          <p className="text-sm text-ink-soft">{t("Todos os serviços ficam na sua categoria:", "All services belong to your category:")} <strong className="text-ink">{categoryName(current, lang)}</strong></p>
+        ) : (
+          <div className="mt-2"><Alert tone="warn">{t("Escolha a categoria do seu serviço no perfil antes de cadastrar serviços.", "Choose your service category in the profile before adding services.")}</Alert></div>
+        )}
         <ul className="mt-3 divide-y divide-line">
+          {svcs.length === 0 && <li className="py-2 text-sm text-ink-soft">{t("Nenhum serviço cadastrado ainda.", "No services yet.")}</li>}
           {svcs.map((s) => (
             <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
-              <div><p className="font-semibold">{s.name}</p><p className="text-sm text-ink-soft">{s.category.name} · {s.priceType === "ON_REQUEST" ? "sob consulta" : formatRange(s.priceMin, s.priceMax)}</p></div>
-              <form action={removeServiceAction}><input type="hidden" name="serviceId" value={s.id} /><Button size="sm" variant="ghost">Remover</Button></form>
+              <div>
+                <p className="font-semibold">{s.name}</p>
+                <p className="text-sm text-ink-soft">{s.priceType === "ON_REQUEST" ? t("sob consulta", "on request") : formatRange(s.priceMin, s.priceMax, lang)}</p>
+              </div>
+              <form action={removeServiceAction}><input type="hidden" name="serviceId" value={s.id} /><Button size="sm" variant="ghost">{t("Remover", "Remove")}</Button></form>
             </li>
           ))}
         </ul>
-        <form action={addServiceAction} className="mt-4 grid gap-3 rounded-xl bg-surface p-4 sm:grid-cols-2">
-          <Field label="Nome" htmlFor="sn"><Input id="sn" name="name" required placeholder="Ex.: Pacote festa infantil 4h" /></Field>
-          <Field label="Categoria" htmlFor="sc">
-            <Select id="sc" name="categoryId">{p.categories.map((c) => <option key={c.categoryId} value={c.categoryId}>{c.category.name}</option>)}</Select>
-          </Field>
-          <Field label="Tipo" htmlFor="sk"><Select id="sk" name="kind"><option value="SERVICE">Serviço</option><option value="PRODUCT">Produto</option></Select></Field>
-          <Field label="Preço" htmlFor="st">
-            <Select id="st" name="priceType"><option value="FROM">A partir de</option><option value="FIXED">Valor fixo</option><option value="PER_PERSON">Por pessoa</option><option value="ON_REQUEST">Sob consulta</option></Select>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Valor mín. (R$)" htmlFor="smin"><Input id="smin" name="priceMin" inputMode="decimal" /></Field>
-            <Field label="Valor máx. (R$)" htmlFor="smax"><Input id="smax" name="priceMax" inputMode="decimal" /></Field>
-          </div>
-          <Field label="Descrição" htmlFor="sd"><Input id="sd" name="description" /></Field>
-          <div className="sm:col-span-2"><Button size="sm" variant="dark">Adicionar serviço</Button></div>
-        </form>
+        {current && (
+          <form action={addServiceAction} className="mt-4 grid gap-3 rounded-xl bg-surface p-4 sm:grid-cols-2">
+            <Field label={t("Nome", "Name")} htmlFor="sn"><Input id="sn" name="name" required placeholder={t("Ex.: Pacote festa infantil 4h", "E.g. 4-hour kids' party package")} /></Field>
+            <Field label={t("Tipo", "Type")} htmlFor="sk"><Select id="sk" name="kind"><option value="SERVICE">{t("Serviço", "Service")}</option><option value="PRODUCT">{t("Produto", "Product")}</option></Select></Field>
+            <Field label={t("Preço", "Price")} htmlFor="st">
+              <Select id="st" name="priceType">
+                <option value="FROM">{t("A partir de", "Starting at")}</option>
+                <option value="FIXED">{t("Valor fixo", "Fixed price")}</option>
+                <option value="PER_PERSON">{t("Por pessoa", "Per person")}</option>
+                <option value="ON_REQUEST">{t("Sob consulta", "On request")}</option>
+              </Select>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t("Valor mín. (R$)", "Min. price (R$)")} htmlFor="smin"><Input id="smin" name="priceMin" inputMode="decimal" /></Field>
+              <Field label={t("Valor máx. (R$)", "Max. price (R$)")} htmlFor="smax"><Input id="smax" name="priceMax" inputMode="decimal" /></Field>
+            </div>
+            <div className="sm:col-span-2"><Field label={t("Descrição", "Description")} htmlFor="sd"><Input id="sd" name="description" /></Field></div>
+            <div className="sm:col-span-2"><Button size="sm" variant="dark">{t("Adicionar serviço", "Add service")}</Button></div>
+          </form>
+        )}
       </Panel>
 
-      <Panel className="mt-6">
-        <h2 className="text-xl font-bold">Agenda</h2>
-        <p className="text-sm text-ink-soft">Bloqueie as datas em que não pode atender. Datas de contratações confirmadas são bloqueadas automaticamente.</p>
-        <form action={blockDateAction} className="mt-3 flex flex-wrap items-end gap-3">
-          <Field label="Data" htmlFor="bd"><Input id="bd" name="date" type="date" min={new Date().toISOString().slice(0, 10)} required /></Field>
-          <Field label="Observação" htmlFor="bn"><Input id="bn" name="note" placeholder="Opcional" /></Field>
-          <Button size="sm" variant="dark">Bloquear data</Button>
-        </form>
-        <ul className="mt-4 divide-y divide-line">
-          {dates.length === 0 && <li className="py-2 text-sm text-ink-soft">Nenhuma data bloqueada.</li>}
-          {dates.map((d) => (
-            <li key={d.id} className="flex items-center justify-between py-2 text-sm">
-              <span>{formatDate(d.date)} · {d.status === "BOOKED" ? "Contratação confirmada" : "Bloqueada"}{d.note && ` · ${d.note}`}</span>
-              {d.status === "BLOCKED" && <form action={unblockDateAction}><input type="hidden" name="id" value={d.id} /><Button size="sm" variant="ghost">Liberar</Button></form>}
-            </li>
-          ))}
-        </ul>
-      </Panel>
+      <div className="mt-6 flex justify-end">
+        <LinkButton href={`/fornecedores/${p.slug}`} variant="outline" size="sm">{t("Ver perfil público", "View public profile")}</LinkButton>
+      </div>
     </div>
   );
 }

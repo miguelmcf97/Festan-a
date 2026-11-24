@@ -38,6 +38,8 @@ Mudou o schema? `npm run db:generate` (gera SQL em `drizzle/`), revise o SQL, ro
 - Server Actions em `actions.ts` por área; só exporte funções que podem ser chamadas pelo cliente (helpers vão para `src/server/services`).
 - Componentes visuais em `src/components/ui.tsx`. Paleta: tinta `ink` #2A1846, ação `pitanga` #E5384F, destaque `maracuja` #FFC23D, confirmado `folha` #0F8A68. Fontes: Bricolage Grotesque (títulos) e Figtree (texto). Sem caixa alta em rótulos, sem gradientes decorativos.
 - Textos de interface: frases curtas, voz ativa, o botão diz o que acontece ("Enviar proposta"), erros dizem como resolver.
+- **Todo texto de interface é bilíngue**: `t("português", "English")` (servidor: `getT()`; cliente: `useLang()`). Mensagens de `?ok=`/`?erro=` ficam em português e ganham tradução em `src/lib/messages-en.ts`. Categoria nova? Acrescente o nome em inglês em `CATEGORY_EN`.
+- Um fornecedor atua em **uma** categoria (índice único no banco); a IA usa Claude Haiku 5.5 e cada cliente tem 3 mensagens (ver `docs/REGRAS_DE_NEGOCIO.md`).
 - Alterou comportamento da IA? Crie nova `PROMPT_VERSION` e rode a avaliação de `docs/PLANO_DE_TESTES.md` §3.
 - Novas regras de negócio: atualize `docs/REGRAS_DE_NEGOCIO.md` no mesmo commit.
 

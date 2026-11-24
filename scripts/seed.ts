@@ -72,38 +72,38 @@ const CATEGORIES: Cat[] = [
   { slug: "sonorizacao", name: "Sonorização", group: "Serviços especializados", icon: "speaker", fxMin: 450, fxMax: 2200, kw: ["som"] },
 ];
 
-// [nome, categorias, bairro (índice LOCATIONS), raio km, preço min, preço max, nota de preço, minG, maxG, verificado, tom, pitch]
+// [nome, [categoria única — regra: um fornecedor, uma categoria], bairro (índice LOCATIONS), raio km, preço min, preço max, nota de preço, minG, maxG, verificado, tom, pitch]
 type P = [string, string[], number, number, number | null, number | null, string | null, number | null, number | null, boolean, string, string];
 const PROVIDERS: P[] = [
   ["Casa Ventania Eventos", ["espaco-de-festas"], 0, 15, 4500, 14000, "Diária com 5h de uso", 40, 180, true, "violet", "Casa de festas com área kids e varanda coberta"],
   ["Espaço Quintal das Palmeiras", ["espaco-de-festas"], 2, 15, 3200, 9000, "Pacote sábado 4h", 30, 120, true, "emerald", "Quintal arborizado para festas infantis e familiares"],
   ["Salão Estrela do Norte", ["espaco-de-festas"], 7, 12, 2200, 6500, null, 30, 150, false, "amber", "Salão climatizado com cozinha de apoio"],
-  ["Recanto Serra Azul", ["espaco-de-festas", "sitios-e-chacaras"], 3, 30, 2800, 7500, "Diária completa", 20, 200, true, "teal", "Sítio com piscina e churrasqueira"],
+  ["Recanto Serra Azul", ["sitios-e-chacaras"], 3, 30, 2800, 7500, "Diária completa", 20, 200, true, "teal", "Sítio com piscina e churrasqueira"],
   ["Espaço Maré Alta", ["espaco-de-festas"], 15, 20, 5000, 16000, null, 50, 220, true, "sky", "Salão com vista para a baía"],
   ["Ateliê Doce Lume", ["doces-e-bolos"], 5, 25, 450, 2500, "Bolo + 100 docinhos a partir de R$ 450", null, null, true, "rose", "Bolos decorados e doces finos"],
-  ["Confeitaria Brigadeiro de Vó", ["doces-e-bolos", "cascata-de-chocolate"], 8, 30, 380, 1800, null, null, null, false, "pink", "Doces tradicionais e cascata de chocolate"],
+  ["Confeitaria Brigadeiro de Vó", ["cascata-de-chocolate"], 8, 30, 380, 1800, null, null, null, false, "pink", "Doces tradicionais e cascata de chocolate"],
   ["Doceria Flor de Açúcar", ["doces-e-bolos"], 15, 20, 500, 3000, null, null, null, true, "fuchsia", "Bolos artísticos e mesas de doces"],
   ["Sabor de Festa Buffet", ["buffet"], 0, 30, 6000, 22000, "R$ 65 a R$ 140 por pessoa", 40, 300, true, "orange", "Buffet completo com equipe de garçons"],
   ["Buffet Mesa Farta", ["buffet"], 8, 25, 4000, 15000, "A partir de R$ 52 por pessoa", 30, 200, true, "amber", "Salgados, finger food e jantar"],
   ["Coquetel & Cia", ["buffet"], 13, 20, 5500, 20000, null, 30, 150, false, "slate", "Coquetel volante para eventos sociais e corporativos"],
-  ["Gourmet Itinerante", ["buffet", "food-trucks"], 16, 35, 3500, 12000, null, 30, 250, true, "lime", "Buffet e food truck de hambúrguer artesanal"],
+  ["Gourmet Itinerante", ["food-trucks"], 16, 35, 3500, 12000, null, 30, 250, true, "lime", "Buffet e food truck de hambúrguer artesanal"],
   ["Brasa Carioca Churrasqueiros", ["churrasco"], 3, 40, 2800, 9000, "R$ 48 a R$ 85 por pessoa", 30, 250, true, "red", "Churrasco completo com equipe e equipamentos"],
   ["Fogo de Chão em Casa", ["churrasco"], 21, 35, 2200, 7000, null, 20, 150, false, "orange", "Churrasqueiro e auxiliar para festas em casa"],
   ["Pula Pula Alegria", ["brinquedos-inflaveis"], 3, 35, 350, 1400, "Diária 6h, montagem inclusa", null, null, true, "yellow", "Infláveis, cama elástica e piscina de bolinhas"],
   ["Mundo Inflável RJ", ["brinquedos-inflaveis"], 20, 30, 300, 1200, null, null, null, false, "sky", "Tobogã inflável e castelo"],
-  ["Turma da Recreação", ["recreacao", "personagens"], 5, 30, 600, 2000, "4h com 2 recreadores", null, 80, true, "green", "Recreadores, oficinas e personagens"],
+  ["Turma da Recreação", ["recreacao"], 5, 30, 600, 2000, "4h com 2 recreadores", null, 80, true, "green", "Recreadores, oficinas e personagens"],
   ["Animarte Personagens", ["personagens"], 12, 35, 350, 1100, null, null, null, false, "purple", "Personagens vivos e contação de histórias"],
-  ["DJ Nando Batida", ["dj", "sonorizacao"], 5, 40, 900, 3000, "5h de som + iluminação básica", null, null, true, "indigo", "DJ para 15 anos, casamentos e formaturas"],
-  ["Sonora Eventos", ["dj", "sonorizacao", "iluminacao"], 15, 35, 1200, 4500, null, null, null, true, "violet", "Som, luz e DJ em pacote único"],
+  ["DJ Nando Batida", ["dj"], 5, 40, 900, 3000, "5h de som + iluminação básica", null, null, true, "indigo", "DJ para 15 anos, casamentos e formaturas"],
+  ["Sonora Eventos", ["sonorizacao"], 15, 35, 1200, 4500, null, null, null, true, "violet", "Som, luz e DJ em pacote único"],
   ["Trio Bossa Leve", ["musica-ao-vivo"], 13, 30, 1800, 4800, null, null, null, false, "teal", "Voz, violão e percussão para cerimônias"],
   ["Clique Mágico Fotografia", ["fotografia"], 5, 40, 1200, 4000, "Cobertura de 4h", null, null, true, "cyan", "Fotografia de festas infantis e 15 anos"],
-  ["Lente Viva Foto e Filme", ["fotografia", "filmagem"], 0, 45, 2200, 8000, "Foto + vídeo em pacote", null, null, true, "slate", "Fotografia e filmagem para casamentos"],
+  ["Lente Viva Foto e Filme", ["filmagem"], 0, 45, 2200, 8000, "Foto + vídeo em pacote", null, null, true, "slate", "Fotografia e filmagem para casamentos"],
   ["Estúdio Retrato Leste", ["fotografia"], 18, 30, 900, 2800, null, null, null, false, "blue", "Cobertura fotográfica de eventos"],
   ["Balão & Arte Decor", ["decoracao"], 7, 25, 450, 3500, "Pegue e monte a partir de R$ 250", null, null, true, "pink", "Decoração com balões e painéis temáticos"],
   ["Ateliê Festa Bonita", ["decoracao"], 0, 30, 1500, 9000, null, null, null, true, "rose", "Decoração completa para 15 anos e casamentos"],
   ["Decora Fácil Pegue e Monte", ["decoracao"], 21, 30, 220, 900, null, null, null, false, "amber", "Kits pegue e monte temáticos"],
   ["Cerimonial Laço de Fita", ["cerimonial"], 13, 40, 2500, 8000, null, null, null, true, "fuchsia", "Assessoria e cerimonial de casamentos e 15 anos"],
-  ["Mesas & Toalhas Rio", ["mesas-e-cadeiras", "tendas-e-estruturas"], 8, 30, 300, 4000, null, null, null, false, "stone", "Mesas, cadeiras, toalhas e tendas"],
+  ["Mesas & Toalhas Rio", ["tendas-e-estruturas"], 8, 30, 300, 4000, null, null, null, false, "stone", "Mesas, cadeiras, toalhas e tendas"],
   ["Carrinho da Alegria", ["pipoca-e-algodao-doce"], 9, 25, 280, 750, "3h de serviço", null, null, false, "yellow", "Pipoca, algodão doce e crepe"],
 ];
 
@@ -205,7 +205,7 @@ async function main() {
     responsibleName: "Jorge (demo)", email: "pendente@planfest.demo", phone: "(21) 90000-0000", locationId: locs[9].id,
     description: "Sonorização e iluminação para festas de pequeno e médio porte.", shortPitch: "Som e luz para festas", status: "PENDING_REVIEW", isDemo: true,
   }).returning();
-  await db.insert(s.providerCategories).values([{ providerId: pend.id, categoryId: catBySlug.get("sonorizacao")!.id }, { providerId: pend.id, categoryId: catBySlug.get("iluminacao")!.id }]);
+  await db.insert(s.providerCategories).values({ providerId: pend.id, categoryId: catBySlug.get("iluminacao")!.id });
 
   // Agenda: algumas datas bloqueadas para demonstrar filtro de disponibilidade
   const d = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);

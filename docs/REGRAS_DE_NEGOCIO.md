@@ -1,6 +1,6 @@
 # Regras de negócio
 
-> Última revisão: 19/11/2026. Fonte da verdade no código: `src/lib/quote-rules.ts` (estados) e `src/server/services/quotes.ts` (operações).
+> Última revisão: 24/11/2026. Fonte da verdade no código: `src/lib/quote-rules.ts` (estados) e `src/server/services/quotes.ts` (operações).
 
 ## 1. Vocabulário (nunca confundir)
 
@@ -73,10 +73,18 @@ Estados finais (COMPLETED, CANCELLED, DECLINED) não aceitam mensagens nem trans
 
 ## 6. Fornecedores: cadastro, aprovação e verificação
 
-- Cadastro exige CPF ou CNPJ com dígitos verificadores válidos, telefone, categoria(s), bairro base, raio e descrição (≥ 30 caracteres). Entra como `PENDING_REVIEW`.
+- Cadastro exige CPF ou CNPJ com dígitos verificadores válidos, telefone, **uma única categoria**, bairro base, raio e descrição (≥ 30 caracteres). Entra como `PENDING_REVIEW`.
+- **Um fornecedor, uma categoria** (desde 24/11/2026): garantido no banco por índice único em `provider_categories(provider_id)`. Todo serviço cadastrado herda essa categoria. Ao trocar de categoria no perfil, os serviços da categoria anterior são desativados (não apagados). A migração `0001_one_category_per_provider` manteve, para quem tinha várias, a categoria com mais serviços ativos (empate: a primeira do catálogo).
+- **Fila do admin** em `/admin/fornecedores`, por etapa e pela data da solicitação de cadastro (padrão: mais antigas primeiro; dá para inverter): **Aprovar** (aguardando aprovação) → **Verificar** (aprovados sem selo) → **Remover selo** (verificados) → suspensos e rejeitados (reativar).
 - Aprovar = aparece no catálogo e na IA. Rejeitar/suspender = some imediatamente.
 - **Verificado** só após o admin conferir documento e contato. O selo é exibido em cards e perfil; "Não verificado" também é exibido (transparência).
 - O documento nunca é exibido publicamente; no admin aparece mascarado.
+
+## 6.1 Agenda do fornecedor
+
+- Painel em `/fornecedor/agenda` (resumo dos próximos 30 dias também no painel do fornecedor). Cada dia tem uma situação, da mais forte para a mais fraca: **Fechada** (contratação confirmada) → **Reserva** (cliente aceitou a proposta; falta o fornecedor confirmar) → **Bloqueada** (pelo fornecedor) → **Pedido** (solicitação em aberto para a data) → **Livre**.
+- Um toque num dia livre ou com pedido bloqueia; num dia bloqueado, libera. Dias fechados não podem ser liberados pela agenda (só pelo fluxo de contratação). Bloqueio de período: até 92 dias por vez, a partir de hoje (fuso do Rio).
+- A busca e a IA excluem fornecedores com a data bloqueada ou fechada.
 
 ## 7. Avaliações (autenticidade)
 
@@ -104,5 +112,5 @@ Estados finais (COMPLETED, CANCELLED, DECLINED) não aceitam mensagens nem trans
 |---|---|
 | Login | 8 tentativas / 15 min por IP+e-mail |
 | Cadastro | 5 / hora por IP |
-| Mensagens à IA | 30 / hora por usuário ou visitante; 90 / hora por IP |
+| Mensagens à IA | **3 por cliente no total** (somando conversas; visitante que entra na conta leva o uso junto; mensagem que falha não conta; admin sem limite; ajustável em Administração → Indicadores, 0 desliga). Além disso: 30 / hora por usuário ou visitante; 90 / hora por IP |
 | Solicitações de orçamento | 20 / dia por cliente |
